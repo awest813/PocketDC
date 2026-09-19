@@ -9,7 +9,7 @@ PocketDC is a Dreamcast-only fork of Walnut-CGB. It packages the Game Boy / Game
 ## What you get
 
 - Dreamcast-focused Game Boy and Game Boy Color emulation
-- KallistiOS frontend with ROM browser, direct loading, and cover art
+- KallistiOS frontend with ROM browser, cover art, About screen, and DC-style quit combo
 - Maple controller input, PVR video output, and AICA audio
 - Optional boot-disc packaging for CD-R, GD-ROM, SD, IDE, and dcload workflows
 - Bundled MiniGB APU for Dreamcast audio output

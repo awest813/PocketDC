@@ -91,6 +91,13 @@ int dc_input_axis_edge(int axis, int *last_axis)
 	return axis;
 }
 
+bool dc_input_quit_combo(uint32_t buttons)
+{
+	const uint32_t mask = CONT_A | CONT_B | CONT_X | CONT_Y | CONT_START;
+
+	return (buttons & mask) == mask;
+}
+
 static uint8_t dc_buttons_to_joypad(const cont_state_t *pad)
 {
 	const uint32_t buttons = pad->buttons;
@@ -137,6 +144,7 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	state->cycle_palette = false;
 	state->toggle_frameskip = false;
 	state->cycle_scale = false;
+	state->system_exit = false;
 
 	controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
 	if (!controller) {
@@ -157,6 +165,13 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	}
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons)) {
+		state->system_exit = true;
+		gb->direct.joypad = 0xFF;
+		state->joypad = 0xFF;
+		state->fast_mode = 1;
+		return;
+	}
 	{
 		const uint32_t changed = buttons ^ previous_buttons;
 

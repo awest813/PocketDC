@@ -481,6 +481,10 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 
 		if (input.reset_game)
 			gb_reset(&gb);
+		if (input.system_exit) {
+			dc_write_save(&priv);
+			arch_exit();
+		}
 		if (input.cycle_palette) {
 			palette_selection = (palette_selection + 1) % DC_PALETTE_COUNT;
 			dc_manual_assign_palette(&priv, (uint8_t)palette_selection);
@@ -660,6 +664,7 @@ int main(int argc, char **argv)
 
 				if (!dc_run_game(selected_rom, NULL, true))
 					goto shutdown;
+				dc_toast_show("Returned to menu", 1400);
 				continue;
 			}
 
@@ -672,6 +677,11 @@ int main(int argc, char **argv)
 
 			if (action == DC_MAIN_MENU_CONTROLS) {
 				dc_controls_menu_run();
+				continue;
+			}
+
+			if (action == DC_MAIN_MENU_ABOUT) {
+				dc_about_menu_run();
 				continue;
 			}
 
@@ -691,6 +701,7 @@ int main(int argc, char **argv)
 
 				if (!dc_run_game(selected_rom, NULL, true))
 					goto shutdown;
+				dc_toast_show("Returned to menu", 1400);
 			}
 		}
 	}

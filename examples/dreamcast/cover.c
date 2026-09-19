@@ -66,7 +66,7 @@ static uint16_t dc_cover_hsv_to_rgb555(int hue)
 }
 
 bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
-			bool *is_cgb, uint8_t *cart_type)
+			bool *is_cgb, uint8_t *cart_type, uint8_t *rom_size_code)
 {
 	FILE *file;
 	uint8_t header[0x150];
@@ -108,7 +108,70 @@ bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
 	if (cart_type)
 		*cart_type = header[0x147];
 
+	if (rom_size_code)
+		*rom_size_code = header[0x148];
+
 	return true;
+}
+
+void dc_rom_format_cart_info(uint8_t cart_type, uint8_t rom_size_code,
+			     char *cart_out, size_t cart_len,
+			     char *size_out, size_t size_len)
+{
+	const char *cart;
+
+	if (size_out && size_len > 0) {
+		if (rom_size_code <= 8)
+			snprintf(size_out, size_len, "%dK", 32 << rom_size_code);
+		else
+			snprintf(size_out, size_len, "?KB");
+	}
+
+	if (!cart_out || cart_len == 0)
+		return;
+
+	switch (cart_type) {
+	case 0x00:
+		cart = "ROM";
+		break;
+	case 0x01:
+		cart = "MBC1";
+		break;
+	case 0x02:
+		cart = "MBC1+RAM";
+		break;
+	case 0x03:
+		cart = "MBC1+BAT";
+		break;
+	case 0x05:
+	case 0x06:
+		cart = "MBC2";
+		break;
+	case 0x0F:
+	case 0x10:
+		cart = "MBC3+RTC";
+		break;
+	case 0x11:
+	case 0x12:
+	case 0x13:
+		cart = "MBC3";
+		break;
+	case 0x19:
+	case 0x1A:
+	case 0x1B:
+		cart = "MBC5";
+		break;
+	case 0x1C:
+	case 0x1D:
+	case 0x1E:
+		cart = "MBC5+RUM";
+		break;
+	default:
+		snprintf(cart_out, cart_len, "CART %02X", cart_type);
+		return;
+	}
+
+	snprintf(cart_out, cart_len, "%s", cart);
 }
 
 static void dc_cover_rom_stem(const char *rom_path, char *stem, size_t stem_len)

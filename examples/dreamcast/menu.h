@@ -18,6 +18,7 @@ enum dc_main_menu_action
 	DC_MAIN_MENU_ROM_LIBRARY,
 	DC_MAIN_MENU_SETTINGS,
 	DC_MAIN_MENU_CONTROLS,
+	DC_MAIN_MENU_ABOUT,
 	DC_MAIN_MENU_EXIT
 };
 
@@ -41,6 +42,7 @@ typedef void (*dc_settings_apply_cb)(struct dc_settings *settings);
 bool dc_settings_menu_run(struct dc_settings *settings);
 void dc_menu_set_settings_apply_callback(dc_settings_apply_cb callback);
 void dc_controls_menu_run(void);
+void dc_about_menu_run(void);
 void dc_menu_show_message(const char *title, const char *message, int duration_ms);
 
 #endif /* DC_MENU_H */

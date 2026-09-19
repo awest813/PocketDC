@@ -6,6 +6,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifdef _arch_dreamcast
+#include <malloc.h>
+#endif
 
 #include <kos.h>
 #include <dc/maple/controller.h>
@@ -78,6 +81,8 @@ static void dc_menu_poll_input(struct dc_menu_input *input)
 		goto release;
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons))
+		arch_exit();
 	changed = buttons ^ previous_buttons;
 
 	vert = dc_input_axis((buttons & CONT_DPAD_UP) != 0,
@@ -192,21 +197,33 @@ static void dc_menu_draw_splash(uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDT
 				const char *prompt)
 {
 	char version[24];
+	char ram_line[32];
 
 	snprintf(version, sizeof(version), "v%d.%d.%d",
 		 WALNUTGB_VERSION_MAJOR, WALNUTGB_VERSION_MINOR,
 		 WALNUTGB_VERSION_PATCH);
+#ifdef _arch_dreamcast
+	{
+		struct mallinfo mi = mallinfo();
+
+		snprintf(ram_line, sizeof(ram_line), "Heap %dK used",
+			 (int)(mi.uordblks / 1024));
+	}
+#else
+	snprintf(ram_line, sizeof(ram_line), "16 MB SH-4");
+#endif
 
 	dc_ui_clear(screen, DC_UI_COLOR_BG);
-	dc_ui_fill_rect(screen, 0, 180, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
-	dc_ui_draw_text(screen, 176, 200, "PocketDC", DC_UI_COLOR_TITLE, DC_UI_COLOR_BG);
-	dc_ui_draw_text(screen, 120, 232, "Game Boy / Game Boy Color",
+	dc_ui_fill_rect(screen, 0, 168, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
+	dc_ui_draw_text(screen, 176, 188, "PocketDC", DC_UI_COLOR_TITLE, DC_UI_COLOR_BG);
+	dc_ui_draw_text(screen, 120, 220, "Game Boy / Game Boy Color",
 			DC_UI_COLOR_FG, DC_UI_COLOR_BG);
-	dc_ui_draw_text(screen, 168, 264, "Dreamcast Edition", DC_UI_COLOR_DIM,
+	dc_ui_draw_text(screen, 168, 248, "Dreamcast Edition", DC_UI_COLOR_DIM,
 			DC_UI_COLOR_BG);
-	dc_ui_draw_text(screen, 232, 288, version, DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
-	dc_ui_fill_rect(screen, 0, 316, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
-	dc_ui_draw_text(screen, 200, 352, prompt, DC_UI_COLOR_FG, DC_UI_COLOR_BG);
+	dc_ui_draw_text(screen, 232, 272, version, DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
+	dc_ui_draw_text(screen, 200, 296, ram_line, DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
+	dc_ui_fill_rect(screen, 0, 324, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
+	dc_ui_draw_text(screen, 200, 360, prompt, DC_UI_COLOR_FG, DC_UI_COLOR_BG);
 }
 
 bool dc_start_menu_run(void)
@@ -262,10 +279,28 @@ void dc_menu_show_message(const char *title, const char *message, int duration_m
 	}
 }
 
+static bool dc_menu_confirm(const char *title, const char *message)
+{
+	const char *items[2];
+	struct dc_menu_list menu = {
+		.title = title ? title : "Confirm",
+		.subtitle = message,
+		.items = items,
+		.count = 2,
+		.selected = 1
+	};
+	int choice;
+
+	items[0] = "Yes";
+	items[1] = "No";
+	choice = dc_menu_run_list(&menu, "A:Select  B:No");
+	return choice == 0;
+}
+
 enum dc_main_menu_action dc_main_menu_run(const struct dc_settings *settings)
 {
 	char continue_label[DC_SETTINGS_LAST_ROM_LEN + 16];
-	const char *items[5];
+	const char *items[6];
 	struct dc_menu_list menu = {
 		.title = "PocketDC",
 		.subtitle = "Main Menu",
@@ -273,48 +308,76 @@ enum dc_main_menu_action dc_main_menu_run(const struct dc_settings *settings)
 		.count = 0,
 		.selected = 0
 	};
-	const bool show_continue = settings && dc_settings_can_continue(settings);
-	int choice;
 
-	if (show_continue) {
-		dc_settings_continue_label(settings, continue_label,
-					   sizeof(continue_label));
-		items[menu.count++] = continue_label;
-	}
+	while (1) {
+		const bool show_continue = settings && dc_settings_can_continue(settings);
+		int choice;
+		enum dc_main_menu_action action;
 
-	items[menu.count++] = "ROM Library";
-	items[menu.count++] = "Settings";
-	items[menu.count++] = "Controls";
-	items[menu.count++] = "Exit";
-
-	choice = dc_menu_run_list(&menu, "A:Select  B:Exit");
-	if (choice < 0)
-		return DC_MAIN_MENU_EXIT;
-
-	if (show_continue) {
-		switch (choice) {
-		case 0:
-			return DC_MAIN_MENU_CONTINUE;
-		case 1:
-			return DC_MAIN_MENU_ROM_LIBRARY;
-		case 2:
-			return DC_MAIN_MENU_SETTINGS;
-		case 3:
-			return DC_MAIN_MENU_CONTROLS;
-		default:
-			return DC_MAIN_MENU_EXIT;
+		menu.count = 0;
+		if (show_continue) {
+			dc_settings_continue_label(settings, continue_label,
+						   sizeof(continue_label));
+			items[menu.count++] = continue_label;
 		}
-	}
 
-	switch (choice) {
-	case 0:
-		return DC_MAIN_MENU_ROM_LIBRARY;
-	case 1:
-		return DC_MAIN_MENU_SETTINGS;
-	case 2:
-		return DC_MAIN_MENU_CONTROLS;
-	default:
-		return DC_MAIN_MENU_EXIT;
+		items[menu.count++] = "ROM Library";
+		items[menu.count++] = "Settings";
+		items[menu.count++] = "Controls";
+		items[menu.count++] = "About";
+		items[menu.count++] = "Exit";
+
+		choice = dc_menu_run_list(&menu, "A:Select  B:Exit");
+		if (choice < 0)
+			action = DC_MAIN_MENU_EXIT;
+		else if (show_continue) {
+			switch (choice) {
+			case 0:
+				action = DC_MAIN_MENU_CONTINUE;
+				break;
+			case 1:
+				action = DC_MAIN_MENU_ROM_LIBRARY;
+				break;
+			case 2:
+				action = DC_MAIN_MENU_SETTINGS;
+				break;
+			case 3:
+				action = DC_MAIN_MENU_CONTROLS;
+				break;
+			case 4:
+				action = DC_MAIN_MENU_ABOUT;
+				break;
+			default:
+				action = DC_MAIN_MENU_EXIT;
+				break;
+			}
+		} else {
+			switch (choice) {
+			case 0:
+				action = DC_MAIN_MENU_ROM_LIBRARY;
+				break;
+			case 1:
+				action = DC_MAIN_MENU_SETTINGS;
+				break;
+			case 2:
+				action = DC_MAIN_MENU_CONTROLS;
+				break;
+			case 3:
+				action = DC_MAIN_MENU_ABOUT;
+				break;
+			default:
+				action = DC_MAIN_MENU_EXIT;
+				break;
+			}
+		}
+
+		if (action == DC_MAIN_MENU_EXIT) {
+			if (dc_menu_confirm("Exit PocketDC", "Return to Dreamcast?"))
+				return DC_MAIN_MENU_EXIT;
+			continue;
+		}
+
+		return action;
 	}
 }
 
@@ -469,6 +532,8 @@ void dc_controls_menu_run(void)
 		"",
 		"Main Menu",
 		"Continue = last played ROM (when available)",
+		"About = credits and conventions",
+		"A+B+X+Y+Start = quit to Dreamcast",
 		"",
 		"Settings (main or pause menu)",
 		"Video output, scale, status bar, audio",
@@ -504,6 +569,102 @@ void dc_controls_menu_run(void)
 
 		if (dirty) {
 			dc_controls_draw(screen, lines, line_count, scroll);
+			dc_video_present_screen(screen);
+			dirty = false;
+		}
+
+		dc_menu_poll_input(&input);
+		if (input.back)
+			return;
+
+		if (input.up) {
+			scroll--;
+			if (scroll < 0)
+				scroll = 0;
+			dirty = true;
+		}
+
+		if (input.down) {
+			scroll++;
+			if (scroll > max_scroll)
+				scroll = max_scroll;
+			dirty = true;
+		}
+
+		elapsed = timer_ms_gettime64() - frame_start;
+		if (elapsed < DC_INPUT_FRAME_MS)
+			timer_spin((int)(DC_INPUT_FRAME_MS - elapsed));
+	}
+}
+
+void dc_about_menu_run(void)
+{
+	static const char *lines[] = {
+		"PocketDC",
+		"Dreamcast Game Boy / GBC emulator",
+		"",
+		"Core",
+		"Walnut-CGB (Peanut-GB lineage)",
+		"MiniGB APU for sound",
+		"",
+		"Frontend",
+		"KallistiOS  PVR  AICA  Maple",
+		"audio_processor  audio_ring  ini_kv",
+		"",
+		"Conventions",
+		"A+B+X+Y+Start = quit to loader",
+		"B in menus = back",
+		"",
+		"MIT License. Do not distribute ROMs."
+	};
+	const unsigned int line_count = sizeof(lines) / sizeof(lines[0]);
+	const int visible_lines =
+		(DC_UI_FOOTER_Y - DC_UI_CONTENT_TOP) / DC_CONTROLS_LINE_HEIGHT;
+	const int total_lines = dc_controls_count_lines(lines, line_count);
+	int scroll = 0;
+	uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH];
+	bool dirty = true;
+
+	dc_menu_flush_input();
+
+	while (1) {
+		const uint64_t frame_start = timer_ms_gettime64();
+		struct dc_menu_input input;
+		uint64_t elapsed;
+		int max_scroll;
+
+		max_scroll = total_lines - visible_lines;
+		if (max_scroll < 0)
+			max_scroll = 0;
+		if (scroll > max_scroll)
+			scroll = max_scroll;
+
+		if (dirty) {
+			unsigned int i;
+			int line_index = 0;
+			int y = DC_UI_CONTENT_TOP;
+
+			dc_ui_clear(screen, DC_UI_COLOR_BG);
+			dc_ui_draw_header(screen, "About", "Credits");
+			dc_ui_draw_footer(screen, "Up/Dn:Scroll  B:Back");
+			for (i = 0; i < line_count; i++) {
+				uint16_t color = DC_UI_COLOR_FG;
+
+				if (lines[i][0] == '\0')
+					continue;
+				if (line_index < scroll) {
+					line_index++;
+					continue;
+				}
+				if (y + 8 > DC_UI_FOOTER_Y)
+					break;
+				if (dc_controls_is_section_title(lines, i))
+					color = DC_UI_COLOR_TITLE;
+				dc_ui_draw_text(screen, 24, y, lines[i], color,
+						DC_UI_COLOR_BG);
+				y += DC_CONTROLS_LINE_HEIGHT;
+				line_index++;
+			}
 			dc_video_present_screen(screen);
 			dirty = false;
 		}
@@ -784,6 +945,8 @@ static bool dc_settings_poll_input(struct dc_settings *settings, int *selected_r
 		goto release;
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons))
+		arch_exit();
 	changed = buttons ^ previous_buttons;
 
 	vert = dc_input_axis((buttons & CONT_DPAD_UP) != 0,

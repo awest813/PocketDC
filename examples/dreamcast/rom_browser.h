@@ -39,6 +39,8 @@ struct dc_browser_entry
 	char path[256];
 	char name[96];
 	char title[17];
+	char cart_name[16];
+	char rom_size[8];
 	bool is_cgb;
 	bool has_save;
 	bool cover_ready;

@@ -156,7 +156,9 @@ void dc_ui_draw_header(uint16_t fb[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],
 {
 	dc_ui_fill_rect(fb, 0, 0, DC_SCREEN_WIDTH, DC_UI_HEADER_HEIGHT,
 			DC_UI_COLOR_HEADER);
-	dc_ui_draw_text(fb, DC_UI_MARGIN_X, 12, title ? title : "",
+	dc_ui_fill_rect(fb, 0, DC_UI_HEADER_HEIGHT - 2, DC_SCREEN_WIDTH, 2,
+			DC_UI_COLOR_ACCENT);
+	dc_ui_draw_text(fb, DC_UI_MARGIN_X, 10, title ? title : "",
 			DC_UI_COLOR_BG, DC_UI_COLOR_HEADER);
 
 	if (subtitle && subtitle[0] != '\0')

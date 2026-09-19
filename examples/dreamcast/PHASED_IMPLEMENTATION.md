@@ -168,6 +168,7 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 | Start + X | Toggle frameskip |
 | Start + L | Cycle scale mode (does not fast-forward) |
 | Y | Cycle palette |
+| A+B+X+Y+Start | Quit to Dreamcast loader |
 | L / R trigger | Fast-forward (2×; ignored while Start is held) |
 
 ---

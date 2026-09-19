@@ -401,8 +401,14 @@ int dc_browser_scan(struct dc_browser *browser)
 	browser->scroll = 0;
 
 	dir = opendir(browser->root_path);
-	if (!dir)
+	if (!dir) {
+		char line[48];
+
+		snprintf(line, sizeof(line), "No media: %s",
+			 dc_browser_device_label(browser));
+		dc_toast_show(line, 1800);
 		return -1;
+	}
 
 	while ((entry = readdir(dir)) != NULL) {
 		struct dc_browser_entry *slot;
@@ -428,8 +434,31 @@ int dc_browser_scan(struct dc_browser *browser)
 			slot->name[sizeof(slot->name) - 1] = '\0';
 			slot->cover_ready = false;
 			slot->cover_from_file = false;
-			dc_rom_read_header(slot->path, slot->title, sizeof(slot->title),
-					   &slot->is_cgb, NULL);
+			slot->cart_name[0] = '\0';
+			slot->rom_size[0] = '\0';
+			{
+				uint8_t cart_type = 0;
+				uint8_t rom_size_code = 0;
+
+				if (dc_rom_read_header(slot->path, slot->title,
+						       sizeof(slot->title),
+						       &slot->is_cgb, &cart_type,
+						       &rom_size_code)) {
+					dc_rom_format_cart_info(cart_type, rom_size_code,
+								slot->cart_name,
+								sizeof(slot->cart_name),
+								slot->rom_size,
+								sizeof(slot->rom_size));
+				} else {
+					strncpy(slot->title, "Unknown",
+						sizeof(slot->title) - 1);
+					slot->title[sizeof(slot->title) - 1] = '\0';
+					snprintf(slot->cart_name, sizeof(slot->cart_name),
+						 "?");
+					snprintf(slot->rom_size, sizeof(slot->rom_size),
+						 "?");
+				}
+			}
 			slot->has_save = false;
 			if (dc_save_path_from_rom(slot->path, save_path,
 						  sizeof(save_path)) == 0) {
@@ -464,8 +493,22 @@ int dc_browser_scan(struct dc_browser *browser)
 	dc_browser_clamp_selected(browser);
 	dc_browser_update_scroll(browser);
 
-	if (truncated)
-		dc_toast_show("ROM list truncated (128 max)", 2000);
+	{
+		char line[48];
+
+		if (truncated)
+			dc_toast_show("ROM list truncated (128 max)", 2000);
+		else if (count == 0) {
+			snprintf(line, sizeof(line), "%s: no ROMs",
+				 dc_browser_device_label(browser));
+			dc_toast_show(line, 1600);
+		} else {
+			snprintf(line, sizeof(line), "%s: %d ROM%s",
+				 dc_browser_device_label(browser), count,
+				 count == 1 ? "" : "s");
+			dc_toast_show(line, 1400);
+		}
+	}
 
 	return count;
 }
@@ -473,15 +516,17 @@ int dc_browser_scan(struct dc_browser *browser)
 static void dc_browser_draw_header(const struct dc_browser *browser,
 				   uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH])
 {
+	char title[32];
 	char subtitle[96];
 
+	snprintf(title, sizeof(title), "ROM Library (%d)", browser->display_count);
 	snprintf(subtitle, sizeof(subtitle), "%s  %s  %s  %s",
 		 dc_browser_device_label(browser),
 		 dc_browser_filter_label(browser->filter),
 		 browser->view == DC_BROWSER_VIEW_GRID ? "Grid" : "List",
 		 browser->root_path);
 	subtitle[sizeof(subtitle) - 1] = '\0';
-	dc_ui_draw_header(screen, "ROM Library", subtitle);
+	dc_ui_draw_header(screen, title, subtitle);
 	dc_ui_draw_text_clipped(screen, DC_UI_MARGIN_X, DC_BROWSER_HELP_Y,
 				DC_SCREEN_WIDTH - DC_UI_MARGIN_X * 2,
 				"A:Load  B:Device  Y:View  L/R:Page  L+R:Filter  Start:Refresh  X:Back",
@@ -510,11 +555,15 @@ static void dc_browser_draw_preview_panel(struct dc_browser *browser,
 	dc_ui_draw_text_ellipsis(screen, DC_BROWSER_PREVIEW_X + 8, 272,
 				 DC_SCREEN_WIDTH - DC_BROWSER_PREVIEW_X - 16,
 				 entry->name, DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
-	snprintf(line, sizeof(line), "%s%s%s",
+	snprintf(line, sizeof(line), "%s  %s  %s%s",
 		 entry->is_cgb ? "GBC" : "DMG",
-		 entry->has_save ? "  [SAV]" : "",
-		 entry->cover_from_file ? "  Box art" : "  Placeholder");
+		 entry->cart_name[0] ? entry->cart_name : "?",
+		 entry->rom_size[0] ? entry->rom_size : "?",
+		 entry->has_save ? "  [SAV]" : "");
 	dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 296, line,
+			DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
+	dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 316,
+			entry->cover_from_file ? "Box art" : "Placeholder",
 			DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
 }
 
@@ -553,6 +602,15 @@ static void dc_browser_draw_list(const struct dc_browser *browser,
 						DC_BROWSER_LIST_WIDTH - 16, line, fg, bg);
 		}
 	}
+
+	if (browser->scroll > 0)
+		dc_ui_draw_text(screen, DC_BROWSER_LIST_LEFT + DC_BROWSER_LIST_WIDTH - 12,
+				DC_BROWSER_LIST_TOP - 12, "^", DC_UI_COLOR_ACCENT,
+				DC_UI_COLOR_BG);
+	if (browser->scroll + DC_BROWSER_LIST_LINES < browser->display_count)
+		dc_ui_draw_text(screen, DC_BROWSER_LIST_LEFT + DC_BROWSER_LIST_WIDTH - 12,
+				DC_UI_FOOTER_Y - 16, "v", DC_UI_COLOR_ACCENT,
+				DC_UI_COLOR_BG);
 
 	dc_browser_draw_preview_panel((struct dc_browser *)browser, screen);
 }
@@ -703,6 +761,8 @@ static void dc_browser_poll_input(struct dc_browser *browser,
 		goto release;
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons))
+		arch_exit();
 	changed = buttons ^ previous_buttons;
 
 	vert = dc_input_axis((buttons & CONT_DPAD_UP) != 0,
@@ -893,7 +953,6 @@ bool dc_browser_run(struct dc_browser *browser, char *selected_path,
 			browser->root_path[sizeof(browser->root_path) - 1] = '\0';
 			dc_browser_set_covers_path(browser);
 			dc_browser_scan(browser);
-			dc_toast_show(dc_browser_device_label(browser), 1200);
 			dirty = true;
 		}
 

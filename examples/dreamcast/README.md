@@ -30,7 +30,7 @@ This produces `walnut-dc.elf`.
 dc-tool -x walnut-dc.elf
 ```
 
-Shows a start screen, then the main menu with **Continue** (when the last played ROM is still available), **ROM Library**, **Settings**, **Controls**, and **Exit**.
+Shows a start screen, then the main menu with **Continue** (when the last played ROM is still available), **ROM Library**, **Settings**, **Controls**, **About**, and **Exit**. Exit asks for confirmation. Hold **A+B+X+Y+Start** on any screen to return to the Dreamcast loader.
 
 ### ROM library
 
@@ -153,7 +153,8 @@ Phase 3 (ROM browser + disc packaging) is implemented. Phase 4 hardware validati
 - **Status bar** HUD during gameplay
 - **Audio controls** for volume, mute, and buffer size
 - **VGA mode** with auto cable detection (VGA box vs TV)
-- **Cover-art ROM picker** with list/grid views and bundled [xero/boxart](https://github.com/xero/boxart) GB/GBC art
+- **Cover-art ROM picker** with list/grid views, ROM counts, mapper/size info, and bundled [xero/boxart](https://github.com/xero/boxart) GB/GBC art
+- **About** credits screen and Dreamcast A+B+X+Y+Start quit combo
 - **Live settings** for video output, scale, and audio while browsing options
 
 ## Licensing

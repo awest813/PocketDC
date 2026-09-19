@@ -43,7 +43,7 @@ From the main menu, choose **ROM Library**. Scans these paths (press **B** to cy
 | `/ide/roms`, `/ide` | IDE/GDEMU/ODE |
 | `/pc` | dcload transfer target |
 
-Browser controls (D-pad or analog stick; hold to repeat). Recent ROMs appear at the top of list view (`*` prefix). L+R cycles All / DMG / GBC filters:
+Browser controls (D-pad or analog stick; hold to repeat). Recent ROMs appear at the top (`*` in list view, red corner in grid). L+R cycles All / DMG / GBC filters:
 
 | Button | Action |
 |--------|--------|

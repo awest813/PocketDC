@@ -631,7 +631,7 @@ int main(int argc, char **argv)
 	if (show_migration_toast)
 		dc_toast_show("Config upgraded to pocketdc.cfg", 2500);
 	if (audio_init_failed)
-		dc_toast_show("Audio init failed — no sound", 3000);
+		dc_toast_show("Audio init failed - no sound", 3000);
 
 	if (argc >= 2) {
 		const char *save_path = (argc >= 3) ? argv[2] : NULL;
@@ -676,6 +676,7 @@ int main(int argc, char **argv)
 			}
 
 			while (action == DC_MAIN_MENU_ROM_LIBRARY) {
+				dc_browser_apply_persisted(&browser, &app_settings);
 				if (!dc_browser_run(&browser, selected_rom,
 						    sizeof(selected_rom))) {
 					dc_browser_export_persisted(&browser,

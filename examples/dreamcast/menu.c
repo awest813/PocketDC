@@ -478,7 +478,7 @@ void dc_controls_menu_run(void)
 		"ROM Library",
 		"A = Load  B = Next device  Y = Grid/List",
 		"Left/Right = Page  L+R = Filter  Start = Refresh  X = Back",
-		"* = Recent ROM (list view)"
+		"* / corner mark = Recent ROM"
 	};
 	const unsigned int line_count = sizeof(lines) / sizeof(lines[0]);
 	const int visible_lines =

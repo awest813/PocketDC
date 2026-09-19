@@ -269,24 +269,22 @@ static void dc_browser_rebuild_display(struct dc_browser *browser, int focus_ent
 
 	browser->display_count = 0;
 
-	if (browser->view == DC_BROWSER_VIEW_LIST) {
-		for (r = 0; r < DC_SETTINGS_RECENT_MAX; r++) {
-			const int entry_index =
-				dc_browser_find_entry_by_path(browser,
-							      dc_browser_recent[r]);
+	for (r = 0; r < DC_SETTINGS_RECENT_MAX; r++) {
+		const int entry_index =
+			dc_browser_find_entry_by_path(browser,
+						      dc_browser_recent[r]);
 
-			if (entry_index < 0)
-				continue;
-			if (!dc_browser_entry_passes_filter(
-				    &browser->entries[entry_index], browser->filter))
-				continue;
-			if (dc_browser_display_contains(browser, entry_index))
-				continue;
+		if (entry_index < 0)
+			continue;
+		if (!dc_browser_entry_passes_filter(
+			    &browser->entries[entry_index], browser->filter))
+			continue;
+		if (dc_browser_display_contains(browser, entry_index))
+			continue;
 
-			browser->display_map[browser->display_count] = entry_index;
-			browser->display_recent[browser->display_count] = true;
-			browser->display_count++;
-		}
+		browser->display_map[browser->display_count] = entry_index;
+		browser->display_recent[browser->display_count] = true;
+		browser->display_count++;
 	}
 
 	for (i = 0; i < browser->count; i++) {
@@ -585,6 +583,9 @@ static void dc_browser_draw_grid(const struct dc_browser *browser,
 						DC_UI_COLOR_SELECT);
 
 			dc_cover_draw(screen, x + 10, y + 4, 80, 80, entry->cover);
+			if (browser->display_recent[index])
+				dc_ui_fill_rect(screen, x + 4, y + 4, 8, 8,
+						DC_UI_COLOR_ACCENT);
 			if (entry->has_save)
 				dc_ui_fill_rect(screen, x + 86, y + 4, 8, 8,
 						DC_UI_COLOR_SAVE);
@@ -1058,6 +1059,9 @@ int dc_cart_ram_read_file(const char *save_path, uint8_t **dest, size_t len)
 {
 	FILE *f;
 
+	if (!dest)
+		return -1;
+
 	if (len == 0) {
 		*dest = NULL;
 		return 0;
@@ -1066,6 +1070,9 @@ int dc_cart_ram_read_file(const char *save_path, uint8_t **dest, size_t len)
 	*dest = (uint8_t *)calloc(1, len);
 	if (!*dest)
 		return -1;
+
+	if (!save_path || save_path[0] == '\0')
+		return 0;
 
 	f = fopen(save_path, "rb");
 	if (!f)

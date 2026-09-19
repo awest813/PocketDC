@@ -49,9 +49,14 @@ static void dc_ui_draw_glyph(uint16_t fb[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],
 			     int x, int y, unsigned char c,
 			     uint16_t fg, uint16_t bg)
 {
-	const uint8_t *glyph = dc_font8x8_basic[c];
+	const uint8_t *glyph;
 	int row;
 	int col;
+
+	if (c > 0x7F)
+		c = '?';
+
+	glyph = dc_font8x8_basic[c];
 
 	for (row = 0; row < 8; row++) {
 		uint8_t bits = glyph[row];
@@ -155,8 +160,9 @@ void dc_ui_draw_header(uint16_t fb[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],
 			DC_UI_COLOR_BG, DC_UI_COLOR_HEADER);
 
 	if (subtitle && subtitle[0] != '\0')
-		dc_ui_draw_text(fb, DC_UI_MARGIN_X, 48, subtitle, DC_UI_COLOR_DIM,
-				DC_UI_COLOR_BG);
+		dc_ui_draw_text_clipped(fb, DC_UI_MARGIN_X, 28,
+					DC_SCREEN_WIDTH - DC_UI_MARGIN_X * 2,
+					subtitle, DC_UI_COLOR_BG, DC_UI_COLOR_HEADER);
 }
 
 void dc_ui_draw_footer(uint16_t fb[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],
@@ -165,8 +171,9 @@ void dc_ui_draw_footer(uint16_t fb[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],
 	if (!text || text[0] == '\0')
 		return;
 
-	dc_ui_draw_text(fb, DC_UI_MARGIN_X, DC_UI_FOOTER_Y, text, DC_UI_COLOR_DIM,
-			DC_UI_COLOR_BG);
+	dc_ui_draw_text_clipped(fb, DC_UI_MARGIN_X, DC_UI_FOOTER_Y,
+				DC_SCREEN_WIDTH - DC_UI_MARGIN_X * 2,
+				text, DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
 }
 
 void dc_ui_draw_panel(uint16_t fb[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],

@@ -16,6 +16,8 @@ static void test_ini_kv_get_int(void)
 	lequal(value, 75);
 	lequal(ini_kv_get_int("volume=75", "mute", &value), 0);
 	lequal(ini_kv_get_int("volume_max=100", "volume", &value), 0);
+	lequal(ini_kv_get_int("\tvolume\t=\t9", "volume", &value), 1);
+	lequal(value, 9);
 	lequal(ini_kv_get_int("  volume = 42", "volume", &value), 1);
 	lequal(value, 42);
 }
@@ -104,6 +106,13 @@ static void test_audio_processor_volume(void)
 
 	lequal(samples[0], 500);
 	lequal(samples[1], -500);
+
+	samples[0] = 800;
+	samples[1] = -800;
+	audio_processor_set_volume(&proc, 0);
+	audio_processor_process_s16_stereo(&proc, samples, 1);
+	lequal(samples[0], 0);
+	lequal(samples[1], 0);
 }
 
 static void test_audio_processor_mute_fade(void)
@@ -253,6 +262,32 @@ static void test_audio_ring_oversized_block(void)
 	lequal(dst[12], 10);
 }
 
+static void test_audio_ring_wraparound(void)
+{
+	int16_t storage[8 * 2];
+	int16_t src[5 * 2];
+	int16_t more[4 * 2];
+	int16_t dst[6 * 2];
+	struct audio_ring ring;
+
+	audio_ring_init(&ring, storage, 8, 0);
+	fill_ramp(src, 1, 5);
+	audio_ring_push(&ring, src, 5);
+	lequal((int)audio_ring_pop(&ring, dst, 3), 3);
+	lequal(dst[0], 1);
+	lequal(dst[4], 3);
+
+	fill_ramp(more, 10, 4);
+	audio_ring_push(&ring, more, 4); /* write wraps; queued 2+4=6 */
+	lequal((int)audio_ring_used(&ring), 6);
+	lequal((int)audio_ring_pop(&ring, dst, 6), 6);
+	lequal(dst[0], 4);
+	lequal(dst[2], 5);
+	lequal(dst[4], 10);
+	lequal(dst[10], 13);
+	lequal((int)ring.overruns, 0);
+}
+
 static void test_audio_ring_reset(void)
 {
 	int16_t storage[8 * 2];
@@ -282,6 +317,7 @@ int main(void)
 	lrun("audio_ring_underrun", test_audio_ring_underrun);
 	lrun("audio_ring_overrun", test_audio_ring_overrun);
 	lrun("audio_ring_oversized_block", test_audio_ring_oversized_block);
+	lrun("audio_ring_wraparound", test_audio_ring_wraparound);
 	lrun("audio_ring_reset", test_audio_ring_reset);
 	lresults();
 	return lfails != 0;

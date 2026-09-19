@@ -4,6 +4,7 @@
  * Licensed under the MIT License.
  */
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -18,6 +19,9 @@
 #define DC_PVR_PACK_UV(u, v) \
 	((uint32_t)(((int)((u) * 1024.0f)) & 0x3ff) | \
 	 ((((int)((v) * 1024.0f)) & 0x3ff) << 10))
+
+/* pvr_txr_load() copies bytes; count must be a multiple of 32. */
+#define DC_VIDEO_TEX_BYTES(pixels) ((size_t)(pixels) * sizeof(uint16_t))
 
 static pvr_ptr_t tex;
 static pvr_ptr_t ui_tex;
@@ -176,7 +180,8 @@ int dc_video_init(void)
 		return -1;
 
 	memset(upload_buf, 0, sizeof(upload_buf));
-	pvr_txr_load(upload_buf, tex, DC_FB_TEX_WIDTH * DC_FB_TEX_HEIGHT);
+	pvr_txr_load(upload_buf, tex,
+		     DC_VIDEO_TEX_BYTES(DC_FB_TEX_WIDTH * DC_FB_TEX_HEIGHT));
 	dc_video_init_sprite_cxt(&game_sprite_cxt, &game_sprite_hdr, PVR_LIST_OP_POLY,
 				 tex_fmt, DC_FB_TEX_WIDTH, DC_FB_TEX_HEIGHT, tex,
 				 PVR_FILTER_NONE);
@@ -186,7 +191,8 @@ int dc_video_init(void)
 		return -1;
 
 	memset(ui_upload_buf, 0, sizeof(ui_upload_buf));
-	pvr_txr_load(ui_upload_buf, ui_tex, DC_UI_TEX_WIDTH * DC_UI_TEX_HEIGHT);
+	pvr_txr_load(ui_upload_buf, ui_tex,
+		     DC_VIDEO_TEX_BYTES(DC_UI_TEX_WIDTH * DC_UI_TEX_HEIGHT));
 	dc_video_init_sprite_cxt(&ui_sprite_cxt, &ui_sprite_hdr, PVR_LIST_OP_POLY,
 				 tex_fmt, DC_UI_TEX_WIDTH, DC_UI_TEX_HEIGHT, ui_tex,
 				 PVR_FILTER_NONE);
@@ -256,7 +262,8 @@ static bool dc_video_upload_overlays(const char *status_text, bool *has_status,
 	}
 
 	tex_rows = (*has_status ? status_h : 0) + (*has_toast ? toast_h : 0);
-	pvr_txr_load(ui_upload_buf, ui_tex, DC_UI_TEX_WIDTH * tex_rows * 2);
+	pvr_txr_load(ui_upload_buf, ui_tex,
+		     DC_VIDEO_TEX_BYTES(DC_UI_TEX_WIDTH * tex_rows));
 	return true;
 }
 
@@ -296,7 +303,8 @@ void dc_video_present(const struct dc_priv *priv, const char *status_text)
 		memcpy(&upload_buf[y * DC_FB_TEX_WIDTH], priv->fb[y],
 		       LCD_WIDTH * sizeof(uint16_t));
 
-	pvr_txr_load(upload_buf, tex, DC_FB_TEX_WIDTH * DC_FB_TEX_HEIGHT);
+	pvr_txr_load(upload_buf, tex,
+		     DC_VIDEO_TEX_BYTES(DC_FB_TEX_WIDTH * DC_FB_TEX_HEIGHT));
 	overlays = dc_video_upload_overlays(status_text, &has_status, &has_toast);
 
 	pvr_wait_ready();
@@ -328,7 +336,8 @@ void dc_video_present_screen(const uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_W
 		memcpy(&ui_upload_buf[y * DC_UI_TEX_WIDTH], screen[y],
 		       DC_SCREEN_WIDTH * sizeof(uint16_t));
 
-	pvr_txr_load(ui_upload_buf, ui_tex, DC_UI_TEX_WIDTH * DC_UI_TEX_HEIGHT);
+	pvr_txr_load(ui_upload_buf, ui_tex,
+		     DC_VIDEO_TEX_BYTES(DC_UI_TEX_WIDTH * DC_UI_TEX_HEIGHT));
 
 	pvr_wait_ready();
 	pvr_scene_begin();

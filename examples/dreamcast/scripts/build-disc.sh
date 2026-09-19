@@ -46,8 +46,12 @@ make
 # the raw ELF will not boot. Strip to a flat binary, then scramble it.
 mkdir -p "${ROM_DIR}" "${COVERS_DIR}"
 
-if [[ -d "${ROM_DIR}" ]] && compgen -G "${ROM_DIR}/*.gb" >/dev/null ||
-	compgen -G "${ROM_DIR}/*.gbc" >/dev/null; then
+if [[ -d "${ROM_DIR}" ]] && {
+	compgen -G "${ROM_DIR}/*.gb" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.GB" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.gbc" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.GBC" >/dev/null
+}; then
 	if python3 -c "import PIL" 2>/dev/null; then
 		echo "Fetching missing cover art for ROMs in ${ROM_DIR}..."
 		python3 "${FETCH_COVERS}" --roms-dir "${ROM_DIR}" || true

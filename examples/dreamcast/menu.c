@@ -244,13 +244,20 @@ void dc_menu_show_message(const char *title, const char *message, int duration_m
 	uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH];
 	const uint64_t end_time = timer_ms_gettime64() + (uint64_t)duration_ms;
 
+	dc_menu_flush_input();
 	dc_ui_clear(screen, DC_UI_COLOR_BG);
 	dc_ui_draw_header(screen, title ? title : "PocketDC", NULL);
 	dc_ui_draw_text(screen, 120, 220, message ? message : "", DC_UI_COLOR_FG,
 			DC_UI_COLOR_BG);
+	dc_ui_draw_footer(screen, "A/B:Continue");
 
 	while (timer_ms_gettime64() < end_time) {
+		struct dc_menu_input input;
+
 		dc_video_present_screen(screen);
+		dc_menu_poll_input(&input);
+		if (input.select || input.back)
+			break;
 		timer_spin(DC_INPUT_FRAME_MS);
 	}
 }

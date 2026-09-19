@@ -90,15 +90,17 @@ bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
 	for (i = 0; i < 16 && title_len > i + 1; i++) {
 		const uint8_t ch = header[0x134 + i];
 
-		if (ch < ' ' || ch > '_')
+		if (ch < ' ' || ch > '~')
 			break;
 
 		title[i] = (char)ch;
 		title[i + 1] = '\0';
 	}
 
-	if (title[0] == '\0')
+	if (title[0] == '\0') {
 		strncpy(title, "Unknown", title_len);
+		title[title_len - 1] = '\0';
+	}
 
 	if (is_cgb)
 		*is_cgb = (header[0x143] & 0x80) != 0;

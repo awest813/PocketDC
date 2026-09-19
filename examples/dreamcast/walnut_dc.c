@@ -441,8 +441,10 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 		return menu_mode;
 	}
 
-	if (save_path && save_path[0] != '\0')
+	if (save_path && save_path[0] != '\0') {
 		strncpy(priv.save_path, save_path, sizeof(priv.save_path) - 1);
+		priv.save_path[sizeof(priv.save_path) - 1] = '\0';
+	}
 
 	{
 		const int init_err = dc_init_emulator(&gb, &priv);

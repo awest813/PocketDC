@@ -138,13 +138,12 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	state->toggle_frameskip = false;
 	state->cycle_scale = false;
 
-	if (!controller)
-		controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
-
+	controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
 	if (!controller) {
 		gb->direct.joypad = 0xFF;
 		state->joypad = 0xFF;
 		state->fast_mode = 1;
+		previous_buttons = 0xFFFF;
 		return;
 	}
 
@@ -153,6 +152,7 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 		gb->direct.joypad = 0xFF;
 		state->joypad = 0xFF;
 		state->fast_mode = 1;
+		previous_buttons = 0xFFFF;
 		return;
 	}
 

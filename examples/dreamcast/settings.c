@@ -229,43 +229,65 @@ void dc_settings_load(struct dc_settings *settings)
 	dc_settings_clamp(settings);
 }
 
+static int dc_settings_write_file(const char *path, const struct dc_settings *settings)
+{
+	char tmp_path[280];
+	FILE *f;
+	unsigned int slot;
+
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+	f = fopen(tmp_path, "w");
+	if (!f)
+		return -1;
+
+	ini_kv_fprint_int(f, "config_version", DC_SETTINGS_CONFIG_VERSION);
+	ini_kv_fprint_int(f, "palette_index", settings->palette_index);
+	ini_kv_fprint_int(f, "video_output", (int)settings->video_output);
+	ini_kv_fprint_int(f, "scale_mode", (int)settings->scale_mode);
+	ini_kv_fprint_bool(f, "status_bar", settings->status_bar);
+	ini_kv_fprint_bool(f, "frameskip", settings->frameskip);
+	ini_kv_fprint_bool(f, "autosave_enabled", settings->autosave_enabled);
+	ini_kv_fprint_int(f, "autosave_interval_sec",
+			  settings->autosave_interval_sec);
+	ini_kv_fprint_int(f, "volume", settings->volume);
+	ini_kv_fprint_bool(f, "muted", settings->muted);
+	ini_kv_fprint_int(f, "audio_buffer", (int)settings->audio_buffer);
+	ini_kv_fprint_int(f, "browser_root_index", settings->browser_root_index);
+	ini_kv_fprint_int(f, "browser_view", settings->browser_view);
+	ini_kv_fprint_int(f, "browser_filter", settings->browser_filter);
+	ini_kv_fprint_string(f, "last_rom_path", settings->last_rom_path);
+	for (slot = 0; slot < DC_SETTINGS_RECENT_MAX; slot++) {
+		char key[24];
+
+		snprintf(key, sizeof(key), "recent_rom_%u", slot);
+		ini_kv_fprint_string(f, key, settings->recent_roms[slot]);
+	}
+
+	if (fflush(f) != 0) {
+		fclose(f);
+		remove(tmp_path);
+		return -1;
+	}
+
+	fclose(f);
+	remove(path);
+	if (rename(tmp_path, path) != 0) {
+		remove(tmp_path);
+		return -1;
+	}
+
+	return 0;
+}
+
 int dc_settings_save(const struct dc_settings *settings)
 {
-	FILE *f;
 	unsigned int i;
-	unsigned int slot;
 
 	dc_settings_pending_migration = false;
 
 	for (i = 0; dc_settings_write_paths[i] != NULL; i++) {
-		f = fopen(dc_settings_write_paths[i], "w");
-		if (!f)
-			continue;
-
-		ini_kv_fprint_int(f, "config_version", DC_SETTINGS_CONFIG_VERSION);
-		ini_kv_fprint_int(f, "palette_index", settings->palette_index);
-		ini_kv_fprint_int(f, "video_output", (int)settings->video_output);
-		ini_kv_fprint_int(f, "scale_mode", (int)settings->scale_mode);
-		ini_kv_fprint_bool(f, "status_bar", settings->status_bar);
-		ini_kv_fprint_bool(f, "frameskip", settings->frameskip);
-		ini_kv_fprint_bool(f, "autosave_enabled", settings->autosave_enabled);
-		ini_kv_fprint_int(f, "autosave_interval_sec",
-				  settings->autosave_interval_sec);
-		ini_kv_fprint_int(f, "volume", settings->volume);
-		ini_kv_fprint_bool(f, "muted", settings->muted);
-		ini_kv_fprint_int(f, "audio_buffer", (int)settings->audio_buffer);
-		ini_kv_fprint_int(f, "browser_root_index", settings->browser_root_index);
-		ini_kv_fprint_int(f, "browser_view", settings->browser_view);
-		ini_kv_fprint_int(f, "browser_filter", settings->browser_filter);
-		ini_kv_fprint_string(f, "last_rom_path", settings->last_rom_path);
-		for (slot = 0; slot < DC_SETTINGS_RECENT_MAX; slot++) {
-			char key[24];
-
-			snprintf(key, sizeof(key), "recent_rom_%u", slot);
-			ini_kv_fprint_string(f, key, settings->recent_roms[slot]);
-		}
-		fclose(f);
-		return 0;
+		if (dc_settings_write_file(dc_settings_write_paths[i], settings) == 0)
+			return 0;
 	}
 
 	return -1;

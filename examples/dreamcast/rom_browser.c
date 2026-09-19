@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — ROM browser and file I/O.
+ * PocketDC Dreamcast frontend — ROM browser and file I/O.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -616,6 +616,7 @@ static void dc_browser_draw(const struct dc_browser *browser,
 		dc_ui_draw_text(screen, 96, 220,
 				"Box art: covers/boxart/GB|GBC/ROMNAME.w555",
 				DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
+		dc_ui_draw_footer(screen, "B:Next device  Start:Refresh  X:Back");
 		dc_toast_draw(screen);
 		return;
 	}
@@ -627,6 +628,7 @@ static void dc_browser_draw(const struct dc_browser *browser,
 		dc_ui_draw_text(screen, 96, 160,
 				"Press L+R to cycle All / DMG / GBC.",
 				DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
+		dc_ui_draw_footer(screen, "L+R:Filter  B:Device  X:Back");
 		dc_toast_draw(screen);
 		return;
 	}

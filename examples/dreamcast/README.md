@@ -91,7 +91,7 @@ Load `walnut-dc.elf` with a ROM path argument if your loader supports argv, or u
 
 | Extra | Action |
 |-------|--------|
-| Start + Y | Pause menu (save/load/settings; load resets game) |
+| Start + Y | Pause menu (save/load; Main Menu when launched from the menu) |
 | Start + A | Reset game |
 | Start + B | Return to main menu (menu mode) or exit (direct load) |
 | Y | Cycle palette |
@@ -128,7 +128,7 @@ Accessible from the main menu or pause menu. Video and audio changes apply immed
 4. Box art is bundled automatically from `covers/boxart/` when you run `build-disc.sh`.
 5. Refresh art from upstream: `./scripts/import-boxart.sh` or `make -f Makefile.covers fetch-covers`
 6. Fetch covers only for ROMs on the disc: `make -f Makefile.covers fetch-roms ROMS_DIR=disc-build/roms`
-6. Burn `disc-build/walnut-dc.iso` or `disc-build/walnut-dc.cdi`.
+7. Burn `disc-build/walnut-dc.iso` or `disc-build/walnut-dc.cdi`.
 
 Disc metadata is defined in `meta/ip.txt` (processed by KOS `makeip`).
 
@@ -158,6 +158,6 @@ Phase 3 (ROM browser + disc packaging) is implemented. Phase 4 hardware validati
 
 ## Licensing
 
-PocketDC is MIT licensed. Shared MIT modules live in `extras/audio_processor/` (volume/mute/DC block) and `extras/ini_kv/` (config I/O). MiniGB APU has its own license in `examples/sdl2/minigb_apu/LICENSE`. KOS requires attribution in distributed binaries.
+PocketDC is MIT licensed. Shared MIT modules live in `extras/audio_processor/` (volume/mute/DC block), `extras/audio_ring/` (audio buffering), and `extras/ini_kv/` (config I/O). MiniGB APU has its own license in `examples/sdl2/minigb_apu/LICENSE`. KOS requires attribution in distributed binaries.
 
 Do not ship copyrighted ROMs with homebrew releases.

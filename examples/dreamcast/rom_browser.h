@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — ROM and save file I/O.
+ * PocketDC Dreamcast frontend — ROM and save file I/O.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

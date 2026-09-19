@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — simple 640x480 UI drawing.
+ * PocketDC Dreamcast frontend — simple 640x480 UI drawing.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -92,9 +92,13 @@ void dc_ui_draw_text_clipped(uint16_t fb[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],
 	if (max_chars <= 0 || !text)
 		return;
 
-	for (int i = 0; text[i] != '\0' && i < max_chars; i++) {
-		dc_ui_draw_glyph(fb, cursor_x, y, (unsigned char)text[i], fg, bg);
-		cursor_x += 8;
+	{
+		int i;
+
+		for (i = 0; text[i] != '\0' && i < max_chars; i++) {
+			dc_ui_draw_glyph(fb, cursor_x, y, (unsigned char)text[i], fg, bg);
+			cursor_x += 8;
+		}
 	}
 }
 

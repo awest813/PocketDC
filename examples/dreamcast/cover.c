@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — ROM cover art.
+ * PocketDC Dreamcast frontend — ROM cover art.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

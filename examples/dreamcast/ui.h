@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — simple 640x480 UI drawing.
+ * PocketDC Dreamcast frontend — simple 640x480 UI drawing.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

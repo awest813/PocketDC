@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — start, main, pause, and settings menus.
+ * PocketDC Dreamcast frontend — start, main, pause, and settings menus.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -35,7 +35,7 @@ enum dc_pause_menu_action
 bool dc_start_menu_run(void);
 enum dc_main_menu_action dc_main_menu_run(const struct dc_settings *settings);
 enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save,
-					    bool can_load);
+					    bool can_load, bool menu_mode);
 typedef void (*dc_settings_apply_cb)(struct dc_settings *settings);
 
 bool dc_settings_menu_run(struct dc_settings *settings);

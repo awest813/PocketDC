@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — AICA audio via snd_stream.
+ * PocketDC Dreamcast frontend — AICA audio via snd_stream.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

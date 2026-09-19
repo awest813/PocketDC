@@ -4,7 +4,7 @@
 
 PocketDC is a Dreamcast-only fork of Walnut-CGB. It packages the Game Boy / Game Boy Color emulator core with a KallistiOS frontend for Sega Dreamcast homebrew.
 
-**Current version:** 1.3.0
+**Current version:** 1.3.1
 
 ## What you get
 

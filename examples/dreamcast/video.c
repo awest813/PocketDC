@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — PVR hardware sprite presentation.
+ * PocketDC Dreamcast frontend — PVR hardware sprite presentation.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -21,6 +21,7 @@
 
 static pvr_ptr_t tex;
 static pvr_ptr_t ui_tex;
+static bool video_ready;
 static pvr_sprite_cxt_t game_sprite_cxt;
 static pvr_sprite_hdr_t game_sprite_hdr;
 static pvr_sprite_cxt_t ui_sprite_cxt;
@@ -146,7 +147,8 @@ void dc_video_set_scale_mode(enum dc_scale_mode mode)
 		return;
 
 	scale_mode = mode;
-	dc_video_update_game_sprite_cxt();
+	if (video_ready)
+		dc_video_update_game_sprite_cxt();
 }
 
 enum dc_scale_mode dc_video_get_scale_mode(void)
@@ -189,11 +191,15 @@ int dc_video_init(void)
 				 tex_fmt, DC_UI_TEX_WIDTH, DC_UI_TEX_HEIGHT, ui_tex,
 				 PVR_FILTER_NONE);
 
+	video_ready = true;
+	dc_video_update_game_sprite_cxt();
 	return 0;
 }
 
 void dc_video_shutdown(void)
 {
+	video_ready = false;
+
 	if (tex) {
 		pvr_mem_free(tex);
 		tex = NULL;
@@ -205,49 +211,20 @@ void dc_video_shutdown(void)
 	pvr_shutdown();
 }
 
-void dc_video_present(const struct dc_priv *priv)
-{
-	unsigned int y;
-
-	for (y = 0; y < LCD_HEIGHT; y++)
-		memcpy(&upload_buf[y * DC_FB_TEX_WIDTH], priv->fb[y],
-		       LCD_WIDTH * sizeof(uint16_t));
-
-	pvr_txr_load(upload_buf, tex, DC_FB_TEX_WIDTH * DC_FB_TEX_HEIGHT);
-
-	pvr_wait_ready();
-	pvr_scene_begin();
-	pvr_list_begin(PVR_LIST_OP_POLY);
-
-	{
-		int draw_x;
-		int draw_y;
-		int draw_w;
-		int draw_h;
-
-		dc_video_compute_layout(&draw_x, &draw_y, &draw_w, &draw_h);
-		dc_video_draw_game_sprite(draw_x, draw_y, draw_w, draw_h);
-	}
-
-	pvr_list_finish();
-	pvr_scene_finish();
-}
-
-void dc_video_present_overlays(const char *status_text)
+static bool dc_video_upload_overlays(const char *status_text, bool *has_status,
+				     bool *has_toast)
 {
 	const int status_h = 20;
 	const int toast_h = 28;
-	const int toast_y = DC_UI_FOOTER_Y;
-	const bool has_status = status_text && status_text[0] != '\0';
-	const bool has_toast = dc_toast_active();
-	const float u1 = (float)DC_SCREEN_WIDTH / (float)DC_UI_TEX_WIDTH;
-	const int tex_rows = (has_status ? status_h : 0) + (has_toast ? toast_h : 0);
+	int tex_rows;
 	unsigned int y;
 
-	if (!has_status && !has_toast)
-		return;
+	*has_status = status_text && status_text[0] != '\0';
+	*has_toast = dc_toast_active();
+	if (!*has_status && !*has_toast)
+		return false;
 
-	if (has_status) {
+	if (*has_status) {
 		uint16_t strip[20][DC_SCREEN_WIDTH];
 
 		memset(strip, 0, sizeof(strip));
@@ -262,9 +239,9 @@ void dc_video_present_overlays(const char *status_text)
 			       DC_SCREEN_WIDTH * sizeof(uint16_t));
 	}
 
-	if (has_toast) {
+	if (*has_toast) {
 		uint16_t strip[28][DC_SCREEN_WIDTH];
-		const int tex_row = has_status ? status_h : 0;
+		const int tex_row = *has_status ? status_h : 0;
 
 		memset(strip, 0, sizeof(strip));
 		dc_ui_fill_rect((uint16_t (*)[DC_SCREEN_WIDTH])strip, 0, 0,
@@ -278,11 +255,17 @@ void dc_video_present_overlays(const char *status_text)
 			       DC_SCREEN_WIDTH * sizeof(uint16_t));
 	}
 
+	tex_rows = (*has_status ? status_h : 0) + (*has_toast ? toast_h : 0);
 	pvr_txr_load(ui_upload_buf, ui_tex, DC_UI_TEX_WIDTH * tex_rows * 2);
+	return true;
+}
 
-	pvr_wait_ready();
-	pvr_scene_begin();
-	pvr_list_begin(PVR_LIST_OP_POLY);
+static void dc_video_draw_overlay_sprites(bool has_status, bool has_toast)
+{
+	const int status_h = 20;
+	const int toast_h = 28;
+	const int toast_y = DC_UI_FOOTER_Y;
+	const float u1 = (float)DC_SCREEN_WIDTH / (float)DC_UI_TEX_WIDTH;
 
 	if (has_status) {
 		const float v1 = (float)status_h / (float)DC_UI_TEX_HEIGHT;
@@ -300,6 +283,38 @@ void dc_video_present_overlays(const char *status_text)
 		dc_video_draw_sprite_uv(&ui_sprite_hdr, 0, toast_y, DC_SCREEN_WIDTH, toast_h,
 					0.0f, v0, u1, v1);
 	}
+}
+
+void dc_video_present(const struct dc_priv *priv, const char *status_text)
+{
+	unsigned int y;
+	bool has_status = false;
+	bool has_toast = false;
+	bool overlays;
+
+	for (y = 0; y < LCD_HEIGHT; y++)
+		memcpy(&upload_buf[y * DC_FB_TEX_WIDTH], priv->fb[y],
+		       LCD_WIDTH * sizeof(uint16_t));
+
+	pvr_txr_load(upload_buf, tex, DC_FB_TEX_WIDTH * DC_FB_TEX_HEIGHT);
+	overlays = dc_video_upload_overlays(status_text, &has_status, &has_toast);
+
+	pvr_wait_ready();
+	pvr_scene_begin();
+	pvr_list_begin(PVR_LIST_OP_POLY);
+
+	{
+		int draw_x;
+		int draw_y;
+		int draw_w;
+		int draw_h;
+
+		dc_video_compute_layout(&draw_x, &draw_y, &draw_w, &draw_h);
+		dc_video_draw_game_sprite(draw_x, draw_y, draw_w, draw_h);
+	}
+
+	if (overlays)
+		dc_video_draw_overlay_sprites(has_status, has_toast);
 
 	pvr_list_finish();
 	pvr_scene_finish();

@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — AICA audio via snd_stream.
+ * PocketDC Dreamcast frontend — AICA audio via snd_stream.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -58,7 +58,6 @@ static void dc_audio_ring_bounds_for_mode(enum dc_audio_buffer_mode mode,
 static void *dc_audio_stream_callback(snd_stream_hnd_t hnd, int smp_req, int *smp_recv)
 {
 	unsigned int frames_requested = (unsigned int)smp_req / DC_AUDIO_STEREO_FRAME_BYTES;
-	unsigned int frames_popped;
 
 	(void)hnd;
 
@@ -66,8 +65,8 @@ static void *dc_audio_stream_callback(snd_stream_hnd_t hnd, int smp_req, int *sm
 		frames_requested = DC_AUDIO_STREAM_MAX_FRAMES;
 
 	/* Always hand back a full buffer; the ring silence-pads any shortfall. */
-	frames_popped = audio_ring_pop(&ring, stream_buf, frames_requested);
-	audio_processor_process_s16_stereo(&processor, stream_buf, frames_popped);
+	audio_ring_pop(&ring, stream_buf, frames_requested);
+	audio_processor_process_s16_stereo(&processor, stream_buf, frames_requested);
 
 	*smp_recv = (int)(frames_requested * DC_AUDIO_STEREO_FRAME_BYTES);
 	return stream_buf;

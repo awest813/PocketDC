@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — Maple controller input.
+ * PocketDC Dreamcast frontend — Maple controller input.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

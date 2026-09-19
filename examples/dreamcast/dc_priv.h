@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — shared private state.
+ * PocketDC Dreamcast frontend — shared private state.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

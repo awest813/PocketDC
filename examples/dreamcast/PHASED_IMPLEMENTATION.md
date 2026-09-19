@@ -166,9 +166,9 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 | Start + Y | Pause menu |
 | Start + B | Exit to main menu (menu mode) |
 | Start + X | Toggle frameskip |
-| Start + L | Cycle scale mode |
+| Start + L | Cycle scale mode (does not fast-forward) |
 | Y | Cycle palette |
-| L / R trigger | Fast-forward (2×) |
+| L / R trigger | Fast-forward (2×; ignored while Start is held) |
 
 ---
 

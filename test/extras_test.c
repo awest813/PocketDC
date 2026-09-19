@@ -15,6 +15,7 @@ static void test_ini_kv_get_int(void)
 	lequal(ini_kv_get_int("volume=75", "volume", &value), 1);
 	lequal(value, 75);
 	lequal(ini_kv_get_int("volume=75", "mute", &value), 0);
+	lequal(ini_kv_get_int("volume_max=100", "volume", &value), 0);
 	lequal(ini_kv_get_int("  volume = 42", "volume", &value), 1);
 	lequal(value, 42);
 }
@@ -33,6 +34,10 @@ static void test_ini_kv_get_string(void)
 				 "last_rom_path", value, sizeof(value)),
 	       1);
 	lok(strcmp(value, "/pc/foo.gb") == 0);
+
+	lequal(ini_kv_get_string("last_rom_path_alt=/sd/x.gb",
+				 "last_rom_path", value, sizeof(value)),
+	       0);
 }
 
 static void test_ini_kv_parse_bool(void)

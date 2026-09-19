@@ -90,7 +90,8 @@ static void dc_settings_clamp(struct dc_settings *settings)
 
 	if (settings->browser_root_index < 0)
 		settings->browser_root_index = 0;
-	if (settings->browser_root_index > 7)
+	/* Seven scan roots (indices 0–6): /cd, /sd, /ide, /pc and their /roms. */
+	if (settings->browser_root_index > 6)
 		settings->browser_root_index = 0;
 
 	if (settings->browser_view > 1)

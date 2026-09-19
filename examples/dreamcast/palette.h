@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — DMG palette helpers.
+ * PocketDC Dreamcast frontend — DMG palette helpers.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

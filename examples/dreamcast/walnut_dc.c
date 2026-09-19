@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend.
+ * PocketDC Dreamcast frontend.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -353,9 +353,6 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 {
 	char rom_title[17];
 	enum dc_pause_menu_action action;
-	const bool can_save = priv.save_size > 0 && priv.cart_ram != NULL;
-	const bool can_load = can_save &&
-			      dc_save_file_exists(priv.save_path);
 
 	gb_get_rom_name(gb, rom_title);
 	rom_title[sizeof(rom_title) - 1] = '\0';
@@ -363,7 +360,11 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 	dc_input_flush_edges();
 
 	while (1) {
-		action = dc_pause_menu_run(rom_title, can_save, can_load);
+		const bool can_save = priv.save_size > 0 && priv.cart_ram != NULL;
+		const bool can_load = can_save &&
+				      dc_save_file_exists(priv.save_path);
+
+		action = dc_pause_menu_run(rom_title, can_save, can_load, menu_mode);
 
 		switch (action) {
 		case DC_PAUSE_MENU_RESUME:
@@ -395,9 +396,11 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 			dc_apply_settings_to_game(gb, &priv);
 			break;
 		case DC_PAUSE_MENU_MAIN_MENU:
+			dc_write_save(&priv);
+			return 0;
 		case DC_PAUSE_MENU_EXIT:
 			dc_write_save(&priv);
-			return menu_mode ? 0 : -1;
+			return -1;
 		default:
 			return 1;
 		}
@@ -427,6 +430,7 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 	bool running = true;
 	bool paused = false;
 	bool return_to_main_menu = false;
+	bool exit_app = false;
 	char rom_title[17];
 
 	memset(&priv, 0, sizeof(priv));
@@ -513,6 +517,7 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 			const int pause_result = dc_handle_pause_menu(&gb, menu_mode);
 
 			if (pause_result < 0) {
+				exit_app = true;
 				running = false;
 				break;
 			}
@@ -545,8 +550,7 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 		}
 
 		fast_mode_timer = fast_mode;
-		dc_video_present(&priv);
-		if (app_settings.status_bar || dc_toast_active()) {
+		{
 			char status_line[64];
 			const char *status = NULL;
 
@@ -555,7 +559,7 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 							 sizeof(status_line));
 				status = status_line;
 			}
-			dc_video_present_overlays(status);
+			dc_video_present(&priv, status);
 		}
 
 		if (save_timer > 0 && priv.save_size > 0 && --save_timer <= 0) {
@@ -576,6 +580,9 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 
 	dc_write_save(&priv);
 	dc_rom_unload(&priv);
+
+	if (exit_app)
+		return false;
 
 	if (return_to_main_menu)
 		return true;

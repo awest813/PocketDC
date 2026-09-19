@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — Maple controller input.
+ * PocketDC Dreamcast frontend — Maple controller input.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -187,6 +187,11 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	state->joypad = dc_buttons_to_joypad(pad);
 	gb->direct.joypad = state->joypad;
 
-	state->fast_mode = ((buttons & CONT_LTRIGGER) || (buttons & CONT_RTRIGGER)) ? 2 : 1;
+	/* Start+L cycles scale; don't treat that chord as fast-forward. */
+	if (!(buttons & CONT_START) &&
+	    ((buttons & CONT_LTRIGGER) || (buttons & CONT_RTRIGGER)))
+		state->fast_mode = 2;
+	else
+		state->fast_mode = 1;
 	previous_buttons = buttons;
 }

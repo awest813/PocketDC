@@ -40,6 +40,14 @@ static void test_ini_kv_get_string(void)
 	lequal(ini_kv_get_string("last_rom_path_alt=/sd/x.gb",
 				 "last_rom_path", value, sizeof(value)),
 	       0);
+
+	lequal(ini_kv_get_string("favorite_rom_10=/sd/b.gb",
+				 "favorite_rom_1", value, sizeof(value)),
+	       0);
+	lequal(ini_kv_get_string("favorite_rom_1=/sd/a.gb",
+				 "favorite_rom_1", value, sizeof(value)),
+	       1);
+	lok(strcmp(value, "/sd/a.gb") == 0);
 }
 
 static void test_ini_kv_parse_bool(void)

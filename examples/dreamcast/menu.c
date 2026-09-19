@@ -542,8 +542,9 @@ void dc_controls_menu_run(void)
 		"",
 		"ROM Library",
 		"A = Load  B = Next device  Y = Grid/List",
-		"Left/Right = Page  L+R = Filter  Start = Refresh  X = Back",
-		"* / corner mark = Recent ROM"
+		"Start+Y = Pin/unpin favorite  L/R = Jump letter",
+		"Left/Right = Page  L+R = Filter  Start = Scan  X = Back",
+		"* = Recent  + / yellow mark = Favorite"
 	};
 	const unsigned int line_count = sizeof(lines) / sizeof(lines[0]);
 	const int visible_lines =
@@ -614,6 +615,7 @@ void dc_about_menu_run(void)
 		"Conventions",
 		"A+B+X+Y+Start = quit to loader",
 		"B in menus = back",
+		"Start+Y in library = favorite",
 		"",
 		"MIT License. Do not distribute ROMs."
 	};

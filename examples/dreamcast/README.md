@@ -43,7 +43,7 @@ From the main menu, choose **ROM Library**. Scans these paths (press **B** to cy
 | `/ide/roms`, `/ide` | IDE/GDEMU/ODE |
 | `/pc` | dcload transfer target |
 
-Browser controls (D-pad or analog stick; hold to repeat). Recent ROMs appear at the top (`*` in list view, red corner in grid). L+R cycles All / DMG / GBC filters:
+Browser controls (D-pad or analog stick; hold to repeat). Recent ROMs appear at the top (`*` in list view, red corner in grid). Favorites are marked `+` in list view and a yellow corner in grid. L+R cycles All / DMG / GBC / Fav. L or R jumps by title letter. Start+Y pins or unpins a favorite (up to 16, stored in `pocketdc.cfg`):
 
 | Button | Action |
 |--------|--------|
@@ -53,6 +53,9 @@ Browser controls (D-pad or analog stick; hold to repeat). Recent ROMs appear at 
 | B | Next device/path |
 | Start | Refresh list |
 | Y | Toggle list / grid view |
+| Start + Y | Pin or unpin favorite |
+| L / R | Jump to previous / next letter |
+| L + R | Cycle All / DMG / GBC / Fav |
 | X | Back to main menu |
 
 The header shows a friendly device name (for example **GD-ROM** or **SD Card**) plus the scan path.
@@ -101,7 +104,7 @@ Load `walnut-dc.elf` with a ROM path argument if your loader supports argv, or u
 
 ## Settings
 
-Accessible from the main menu or pause menu. Video and audio changes apply immediately while the menu is open. Options are saved to `pocketdc.cfg` on the first writable path (`/pc`, `/sd`, `/ide`, or `/cd`). Legacy `walnut-dc.cfg` files are still read if present.
+Accessible from the main menu or pause menu. Video and audio changes apply immediately while the menu is open. Options, recents, and favorites are saved to `pocketdc.cfg` on the first writable path (`/pc`, `/sd`, `/ide`, or `/cd`). Legacy `walnut-dc.cfg` files are still read if present.
 
 | Setting | Description |
 |---------|-------------|
@@ -153,7 +156,7 @@ Phase 3 (ROM browser + disc packaging) is implemented. Phase 4 hardware validati
 - **Status bar** HUD during gameplay
 - **Audio controls** for volume, mute, and buffer size
 - **VGA mode** with auto cable detection (VGA box vs TV)
-- **Cover-art ROM picker** with list/grid views, ROM counts, mapper/size info, and bundled [xero/boxart](https://github.com/xero/boxart) GB/GBC art
+- **Cover-art ROM picker** with list/grid views, ROM counts, mapper/size info, recents, favorites, letter jump, and bundled [xero/boxart](https://github.com/xero/boxart) GB/GBC art
 - **About** credits screen and Dreamcast A+B+X+Y+Start quit combo
 - **Live settings** for video output, scale, and audio while browsing options
 

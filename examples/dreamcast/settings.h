@@ -14,8 +14,9 @@
 #include "display.h"
 #include "video.h"
 
-#define DC_SETTINGS_CONFIG_VERSION     2
+#define DC_SETTINGS_CONFIG_VERSION     3
 #define DC_SETTINGS_RECENT_MAX         5
+#define DC_SETTINGS_FAVORITE_MAX       16
 #define DC_SETTINGS_AUTOSAVE_MIN_SEC   10
 #define DC_SETTINGS_AUTOSAVE_MAX_SEC   300
 #define DC_SETTINGS_AUTOSAVE_DEFAULT_SEC 60
@@ -50,12 +51,15 @@ struct dc_settings
 	uint8_t browser_filter;
 	char last_rom_path[DC_SETTINGS_LAST_ROM_LEN];
 	char recent_roms[DC_SETTINGS_RECENT_MAX][DC_SETTINGS_LAST_ROM_LEN];
+	char favorite_roms[DC_SETTINGS_FAVORITE_MAX][DC_SETTINGS_LAST_ROM_LEN];
 };
 
 void dc_settings_init_defaults(struct dc_settings *settings);
 void dc_settings_load(struct dc_settings *settings);
 int dc_settings_save(const struct dc_settings *settings);
 void dc_settings_push_recent(struct dc_settings *settings, const char *path);
+bool dc_settings_is_favorite(const struct dc_settings *settings, const char *path);
+int dc_settings_toggle_favorite(struct dc_settings *settings, const char *path);
 bool dc_settings_take_migration_notice(void);
 bool dc_settings_can_continue(const struct dc_settings *settings);
 void dc_settings_continue_label(const struct dc_settings *settings, char *out,

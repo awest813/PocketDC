@@ -687,7 +687,7 @@ int main(int argc, char **argv)
 
 			while (action == DC_MAIN_MENU_ROM_LIBRARY) {
 				dc_browser_apply_persisted(&browser, &app_settings);
-				if (!dc_browser_run(&browser, selected_rom,
+				if (!dc_browser_run(&browser, &app_settings, selected_rom,
 						    sizeof(selected_rom))) {
 					dc_browser_export_persisted(&browser,
 								    &app_settings);

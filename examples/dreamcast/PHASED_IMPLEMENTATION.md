@@ -125,7 +125,8 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 - [x] Frameskip toggle (Start + X)
 - [x] Start+B returns to main menu when launched without ROM argument
 - [x] Start screen and main menu (Continue, ROM Library, Settings, Controls, Exit)
-- [x] Recent ROM history and DMG/GBC filter in ROM browser
+- [x] Recent ROM history and DMG/GBC/Fav filter in ROM browser
+- [x] ROM library favorites (Start+Y) and L/R letter jump
 - [x] Config migration from `walnut-dc.cfg` to `pocketdc.cfg`
 - [x] Pause menu with manual save/load (Start + Y)
 - [x] Persistent settings (`pocketdc.cfg`) with live apply for video/audio

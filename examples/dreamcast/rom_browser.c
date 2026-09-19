@@ -38,6 +38,7 @@ struct dc_browser_root
 
 static char dc_browser_rom_hint[DC_SETTINGS_LAST_ROM_LEN];
 static char dc_browser_recent[DC_SETTINGS_RECENT_MAX][DC_SETTINGS_LAST_ROM_LEN];
+static char dc_browser_favorite[DC_SETTINGS_FAVORITE_MAX][DC_SETTINGS_LAST_ROM_LEN];
 
 static const struct dc_browser_root dc_browser_roots[] = {
 	{ "/cd/roms", "GD-ROM" },
@@ -159,8 +160,10 @@ void dc_browser_apply_persisted(struct dc_browser *browser,
 	}
 
 	memcpy(dc_browser_recent, settings->recent_roms, sizeof(dc_browser_recent));
+	memcpy(dc_browser_favorite, settings->favorite_roms,
+	       sizeof(dc_browser_favorite));
 
-	if (settings->browser_filter <= DC_BROWSER_FILTER_GBC)
+	if (settings->browser_filter <= DC_BROWSER_FILTER_FAV)
 		browser->filter = (enum dc_browser_filter)settings->browser_filter;
 	else
 		browser->filter = DC_BROWSER_FILTER_ALL;
@@ -190,6 +193,23 @@ static void dc_browser_move_vertical(struct dc_browser *browser, int direction);
 static void dc_browser_move_horizontal(struct dc_browser *browser, int direction);
 static void dc_browser_rebuild_display(struct dc_browser *browser, int focus_entry);
 
+static bool dc_browser_path_is_favorite(const char *path)
+{
+	unsigned int i;
+
+	if (!path || path[0] == '\0')
+		return false;
+
+	for (i = 0; i < DC_SETTINGS_FAVORITE_MAX; i++) {
+		if (dc_browser_favorite[i][0] == '\0')
+			continue;
+		if (strcmp(dc_browser_favorite[i], path) == 0)
+			return true;
+	}
+
+	return false;
+}
+
 static const char *dc_browser_filter_label(enum dc_browser_filter filter)
 {
 	switch (filter) {
@@ -197,6 +217,8 @@ static const char *dc_browser_filter_label(enum dc_browser_filter filter)
 		return "DMG";
 	case DC_BROWSER_FILTER_GBC:
 		return "GBC";
+	case DC_BROWSER_FILTER_FAV:
+		return "Fav";
 	case DC_BROWSER_FILTER_ALL:
 	default:
 		return "All";
@@ -214,6 +236,8 @@ static bool dc_browser_entry_passes_filter(const struct dc_browser_entry *entry,
 		return !entry->is_cgb;
 	case DC_BROWSER_FILTER_GBC:
 		return entry->is_cgb;
+	case DC_BROWSER_FILTER_FAV:
+		return dc_browser_path_is_favorite(entry->path);
 	case DC_BROWSER_FILTER_ALL:
 	default:
 		return true;
@@ -269,22 +293,24 @@ static void dc_browser_rebuild_display(struct dc_browser *browser, int focus_ent
 
 	browser->display_count = 0;
 
-	for (r = 0; r < DC_SETTINGS_RECENT_MAX; r++) {
-		const int entry_index =
-			dc_browser_find_entry_by_path(browser,
-						      dc_browser_recent[r]);
+	if (browser->filter != DC_BROWSER_FILTER_FAV) {
+		for (r = 0; r < DC_SETTINGS_RECENT_MAX; r++) {
+			const int entry_index =
+				dc_browser_find_entry_by_path(browser,
+							      dc_browser_recent[r]);
 
-		if (entry_index < 0)
-			continue;
-		if (!dc_browser_entry_passes_filter(
-			    &browser->entries[entry_index], browser->filter))
-			continue;
-		if (dc_browser_display_contains(browser, entry_index))
-			continue;
+			if (entry_index < 0)
+				continue;
+			if (!dc_browser_entry_passes_filter(
+				    &browser->entries[entry_index], browser->filter))
+				continue;
+			if (dc_browser_display_contains(browser, entry_index))
+				continue;
 
-		browser->display_map[browser->display_count] = entry_index;
-		browser->display_recent[browser->display_count] = true;
-		browser->display_count++;
+			browser->display_map[browser->display_count] = entry_index;
+			browser->display_recent[browser->display_count] = true;
+			browser->display_count++;
+		}
 	}
 
 	for (i = 0; i < browser->count; i++) {
@@ -529,7 +555,7 @@ static void dc_browser_draw_header(const struct dc_browser *browser,
 	dc_ui_draw_header(screen, title, subtitle);
 	dc_ui_draw_text_clipped(screen, DC_UI_MARGIN_X, DC_BROWSER_HELP_Y,
 				DC_SCREEN_WIDTH - DC_UI_MARGIN_X * 2,
-				"A:Load  B:Device  Y:View  L/R:Page  L+R:Filter  Start:Refresh  X:Back",
+				"A:Load B:Dev Y:View Start+Y:Fav L/R:Aa L+R:Filter Start:Scan X:Back",
 				DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
 }
 
@@ -565,6 +591,9 @@ static void dc_browser_draw_preview_panel(struct dc_browser *browser,
 	dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 316,
 			entry->cover_from_file ? "Box art" : "Placeholder",
 			DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
+	if (dc_browser_path_is_favorite(entry->path))
+		dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 336, "+ Favorite",
+				DC_UI_COLOR_WARN, DC_UI_COLOR_PANEL);
 }
 
 static void dc_browser_draw_list(const struct dc_browser *browser,
@@ -594,9 +623,10 @@ static void dc_browser_draw_list(const struct dc_browser *browser,
 				bg = DC_UI_COLOR_SELECT;
 			}
 
-			snprintf(line, sizeof(line), "%c%s %s%s",
+			snprintf(line, sizeof(line), "%c%c%c%s%s",
 				 index == browser->selected ? '>' : ' ',
-				 browser->display_recent[index] ? "*" : " ",
+				 browser->display_recent[index] ? '*' : ' ',
+				 dc_browser_path_is_favorite(entry->path) ? '+' : ' ',
 				 entry->title, entry->has_save ? " [SAV]" : "");
 			dc_ui_draw_text_ellipsis(screen, DC_BROWSER_LIST_LEFT + 8, y,
 						DC_BROWSER_LIST_WIDTH - 16, line, fg, bg);
@@ -644,6 +674,9 @@ static void dc_browser_draw_grid(const struct dc_browser *browser,
 			if (browser->display_recent[index])
 				dc_ui_fill_rect(screen, x + 4, y + 4, 8, 8,
 						DC_UI_COLOR_ACCENT);
+			if (dc_browser_path_is_favorite(entry->path))
+				dc_ui_fill_rect(screen, x + 4, y + 14, 8, 8,
+						DC_UI_COLOR_WARN);
 			if (entry->has_save)
 				dc_ui_fill_rect(screen, x + 86, y + 4, 8, 8,
 						DC_UI_COLOR_SAVE);
@@ -682,11 +715,19 @@ static void dc_browser_draw(const struct dc_browser *browser,
 
 	if (browser->display_count == 0) {
 		dc_ui_draw_panel(screen, 72, 108, 496, 140, DC_UI_COLOR_PANEL);
-		dc_ui_draw_text(screen, 96, 132, "No ROMs match this filter.",
-				DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
-		dc_ui_draw_text(screen, 96, 160,
-				"Press L+R to cycle All / DMG / GBC.",
-				DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
+		if (browser->filter == DC_BROWSER_FILTER_FAV) {
+			dc_ui_draw_text(screen, 96, 132, "No favorites.",
+					DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
+			dc_ui_draw_text(screen, 96, 160,
+					"Start+Y to pin a ROM, then L+R for Fav.",
+					DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
+		} else {
+			dc_ui_draw_text(screen, 96, 132, "No ROMs match this filter.",
+					DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
+			dc_ui_draw_text(screen, 96, 160,
+					"Press L+R to cycle All / DMG / GBC / Fav.",
+					DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
+		}
 		dc_ui_draw_footer(screen, "L+R:Filter  B:Device  X:Back");
 		dc_toast_draw(screen);
 		return;
@@ -782,15 +823,30 @@ static void dc_browser_poll_input(struct dc_browser *browser,
 		input->select = true;
 	if ((buttons & CONT_B) && (changed & CONT_B))
 		input->next_device = true;
-	if ((buttons & CONT_START) && (changed & CONT_START))
-		input->refresh = true;
 	if ((buttons & CONT_X) && (changed & CONT_X))
 		input->exit = true;
-	if ((buttons & CONT_Y) && (changed & CONT_Y))
-		input->toggle_view = true;
+	if ((buttons & CONT_Y) && (changed & CONT_Y)) {
+		if (buttons & CONT_START)
+			input->toggle_favorite = true;
+		else
+			input->toggle_view = true;
+	}
+	if ((buttons & CONT_START) && (changed & CONT_START)) {
+		if (buttons & CONT_Y)
+			input->toggle_favorite = true;
+		else
+			input->refresh = true;
+	}
 	if ((buttons & CONT_LTRIGGER) && (buttons & CONT_RTRIGGER) &&
-	    (changed & (CONT_LTRIGGER | CONT_RTRIGGER)))
+	    (changed & (CONT_LTRIGGER | CONT_RTRIGGER))) {
 		input->cycle_filter = true;
+	} else if ((buttons & CONT_LTRIGGER) && (changed & CONT_LTRIGGER) &&
+		   !(buttons & CONT_RTRIGGER)) {
+		input->jump_letter_prev = true;
+	} else if ((buttons & CONT_RTRIGGER) && (changed & CONT_RTRIGGER) &&
+		   !(buttons & CONT_LTRIGGER)) {
+		input->jump_letter_next = true;
+	}
 
 	dc_browser_previous_buttons = buttons;
 	dc_browser_t_up = t_up;
@@ -878,7 +934,7 @@ static void dc_browser_cycle_filter(struct dc_browser *browser)
 		focus_entry = browser->display_map[browser->selected];
 
 	browser->filter = (enum dc_browser_filter)((browser->filter + 1) %
-						   (DC_BROWSER_FILTER_GBC + 1));
+						   (DC_BROWSER_FILTER_FAV + 1));
 	dc_browser_rebuild_display(browser, focus_entry);
 	dc_browser_clamp_selected(browser);
 	dc_browser_update_scroll(browser);
@@ -911,8 +967,82 @@ static void dc_browser_update_scroll(struct dc_browser *browser)
 		browser->scroll = browser->selected - visible + 1;
 }
 
-bool dc_browser_run(struct dc_browser *browser, char *selected_path,
-		    size_t selected_len)
+static char dc_browser_letter_from_name(const char *s)
+{
+	unsigned char c;
+
+	if (!s || s[0] == '\0')
+		return '#';
+
+	c = (unsigned char)s[0];
+	if (c >= 'a' && c <= 'z')
+		c = (unsigned char)(c - 'a' + 'A');
+	if (c >= 'A' && c <= 'Z')
+		return (char)c;
+
+	return '#';
+}
+
+static char dc_browser_entry_letter(const struct dc_browser_entry *entry)
+{
+	if (entry->title[0] != '\0' && strcmp(entry->title, "Unknown") != 0)
+		return dc_browser_letter_from_name(entry->title);
+
+	return dc_browser_letter_from_name(entry->name);
+}
+
+static char dc_browser_display_letter(const struct dc_browser *browser, int index)
+{
+	return dc_browser_entry_letter(&browser->entries[browser->display_map[index]]);
+}
+
+static void dc_browser_jump_letter(struct dc_browser *browser, int direction)
+{
+	int i;
+	char current;
+	char target;
+	int group_start;
+
+	if (!browser || browser->display_count <= 1)
+		return;
+
+	dc_browser_clamp_selected(browser);
+	current = dc_browser_display_letter(browser, browser->selected);
+
+	if (direction > 0) {
+		for (i = browser->selected + 1; i < browser->display_count; i++) {
+			if (dc_browser_display_letter(browser, i) != current) {
+				browser->selected = i;
+				return;
+			}
+		}
+		for (i = 0; i < browser->selected; i++) {
+			if (dc_browser_display_letter(browser, i) != current) {
+				browser->selected = i;
+				return;
+			}
+		}
+		return;
+	}
+
+	group_start = browser->selected;
+	while (group_start > 0 &&
+	       dc_browser_display_letter(browser, group_start - 1) == current)
+		group_start--;
+
+	i = group_start - 1;
+	if (i < 0)
+		i = browser->display_count - 1;
+
+	target = dc_browser_display_letter(browser, i);
+	while (i > 0 && dc_browser_display_letter(browser, i - 1) == target)
+		i--;
+
+	browser->selected = i;
+}
+
+bool dc_browser_run(struct dc_browser *browser, struct dc_settings *settings,
+		    char *selected_path, size_t selected_len)
 {
 	uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH];
 	bool dirty = true;
@@ -982,6 +1112,44 @@ bool dc_browser_run(struct dc_browser *browser, char *selected_path,
 		if (input.cycle_filter) {
 			dc_browser_cycle_filter(browser);
 			dc_toast_show(dc_browser_filter_label(browser->filter), 1000);
+			dirty = true;
+		}
+
+		if (input.toggle_favorite && settings) {
+			const struct dc_browser_entry *entry =
+				dc_browser_selected_entry(browser);
+			int result;
+
+			if (entry) {
+				int focus_entry = browser->display_map[browser->selected];
+
+				result = dc_settings_toggle_favorite(settings,
+								     entry->path);
+				if (result < 0) {
+					dc_toast_show("Favorites full (16)", 1600);
+				} else {
+					memcpy(dc_browser_favorite,
+					       settings->favorite_roms,
+					       sizeof(dc_browser_favorite));
+					dc_settings_save(settings);
+					if (browser->filter == DC_BROWSER_FILTER_FAV) {
+						dc_browser_rebuild_display(browser,
+									   focus_entry);
+						dc_browser_clamp_selected(browser);
+						dc_browser_update_scroll(browser);
+					}
+					dc_toast_show(result > 0 ? "Favorite added" :
+								   "Favorite removed",
+						      1200);
+				}
+				dirty = true;
+			}
+		}
+
+		if ((input.jump_letter_next || input.jump_letter_prev) &&
+		    browser->display_count > 0) {
+			dc_browser_jump_letter(browser,
+					       input.jump_letter_next ? 1 : -1);
 			dirty = true;
 		}
 

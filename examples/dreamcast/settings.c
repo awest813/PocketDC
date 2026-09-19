@@ -97,7 +97,7 @@ static void dc_settings_clamp(struct dc_settings *settings)
 	if (settings->browser_view > 1)
 		settings->browser_view = 0;
 
-	if (settings->browser_filter > 2)
+	if (settings->browser_filter > 3)
 		settings->browser_filter = 0;
 }
 
@@ -185,6 +185,13 @@ static void dc_settings_parse_line(struct dc_settings *settings, const char *lin
 				      sizeof(settings->recent_roms[slot])))
 			return;
 	}
+
+	for (slot = 0; slot < DC_SETTINGS_FAVORITE_MAX; slot++) {
+		snprintf(key, sizeof(key), "favorite_rom_%u", slot);
+		if (ini_kv_get_string(line, key, settings->favorite_roms[slot],
+				      sizeof(settings->favorite_roms[slot])))
+			return;
+	}
 }
 
 void dc_settings_load(struct dc_settings *settings)
@@ -262,6 +269,12 @@ static int dc_settings_write_file(const char *path, const struct dc_settings *se
 		snprintf(key, sizeof(key), "recent_rom_%u", slot);
 		ini_kv_fprint_string(f, key, settings->recent_roms[slot]);
 	}
+	for (slot = 0; slot < DC_SETTINGS_FAVORITE_MAX; slot++) {
+		char key[24];
+
+		snprintf(key, sizeof(key), "favorite_rom_%u", slot);
+		ini_kv_fprint_string(f, key, settings->favorite_roms[slot]);
+	}
 
 	if (fflush(f) != 0) {
 		fclose(f);
@@ -329,6 +342,67 @@ void dc_settings_push_recent(struct dc_settings *settings, const char *path)
 	settings->recent_roms[0][sizeof(settings->recent_roms[0]) - 1] = '\0';
 	strncpy(settings->last_rom_path, path, sizeof(settings->last_rom_path) - 1);
 	settings->last_rom_path[sizeof(settings->last_rom_path) - 1] = '\0';
+}
+
+bool dc_settings_is_favorite(const struct dc_settings *settings, const char *path)
+{
+	unsigned int i;
+
+	if (!settings || !path || path[0] == '\0')
+		return false;
+
+	for (i = 0; i < DC_SETTINGS_FAVORITE_MAX; i++) {
+		if (settings->favorite_roms[i][0] == '\0')
+			continue;
+		if (strcmp(settings->favorite_roms[i], path) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+int dc_settings_toggle_favorite(struct dc_settings *settings, const char *path)
+{
+	unsigned int i;
+	unsigned int write;
+
+	if (!settings || !path || path[0] == '\0')
+		return -1;
+
+	if (dc_settings_is_favorite(settings, path)) {
+		for (i = 0, write = 0; i < DC_SETTINGS_FAVORITE_MAX; i++) {
+			if (settings->favorite_roms[i][0] == '\0')
+				continue;
+			if (strcmp(settings->favorite_roms[i], path) == 0)
+				continue;
+			if (write != i) {
+				strncpy(settings->favorite_roms[write],
+					settings->favorite_roms[i],
+					sizeof(settings->favorite_roms[write]) - 1);
+				settings->favorite_roms[write]
+					[sizeof(settings->favorite_roms[write]) - 1] = '\0';
+			}
+			write++;
+		}
+
+		for (; write < DC_SETTINGS_FAVORITE_MAX; write++)
+			settings->favorite_roms[write][0] = '\0';
+
+		return 0;
+	}
+
+	for (i = 0; i < DC_SETTINGS_FAVORITE_MAX; i++) {
+		if (settings->favorite_roms[i][0] != '\0')
+			continue;
+
+		strncpy(settings->favorite_roms[i], path,
+			sizeof(settings->favorite_roms[i]) - 1);
+		settings->favorite_roms[i][sizeof(settings->favorite_roms[i]) - 1] =
+			'\0';
+		return 1;
+	}
+
+	return -1;
 }
 
 bool dc_settings_take_migration_notice(void)

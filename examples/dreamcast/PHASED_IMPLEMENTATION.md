@@ -118,7 +118,7 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 
 ## Phase 3 — ROM Browser & Polish
 
-- [x] Directory scanner for `/cd`, `/sd`, `/ide`, `/pc`
+- [x] Directory scanner for `/cd`, `/sd`, `/ide`, `/pc` (one subfolder level)
 - [x] Simple text UI for ROM selection
 - [x] Boot disc metadata (`IP.BIN` template, `scripts/build-disc.sh`)
 - [x] Palette cycling (Y button) and fast-forward (triggers)

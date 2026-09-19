@@ -395,10 +395,122 @@ static void dc_browser_select_rom_hint(struct dc_browser *browser)
 	}
 }
 
-int dc_browser_scan(struct dc_browser *browser)
+static int dc_browser_skip_subdir_name(const char *name)
+{
+	if (!name || name[0] == '.')
+		return 1;
+	if (strcasecmp(name, "covers") == 0 || strcasecmp(name, "boxart") == 0 ||
+	    strcasecmp(name, "saves") == 0)
+		return 1;
+
+	return 0;
+}
+
+static void dc_browser_add_rom(struct dc_browser *browser, const char *dir_path,
+			      const char *name, int *count, bool *truncated)
+{
+	struct dc_browser_entry *slot;
+	char save_path[256];
+	uint8_t cart_type = 0;
+	uint8_t rom_size_code = 0;
+
+	if (*count >= DC_BROWSER_MAX_ENTRIES) {
+		*truncated = true;
+		return;
+	}
+
+	slot = &browser->entries[*count];
+	snprintf(slot->path, sizeof(slot->path), "%s/%s", dir_path, name);
+	if (strcmp(dir_path, browser->root_path) == 0) {
+		strncpy(slot->name, name, sizeof(slot->name) - 1);
+		slot->name[sizeof(slot->name) - 1] = '\0';
+	} else {
+		const char *rel = dir_path + strlen(browser->root_path);
+
+		if (*rel == '/')
+			rel++;
+		snprintf(slot->name, sizeof(slot->name), "%s/%s", rel, name);
+	}
+
+	slot->cover_ready = false;
+	slot->cover_from_file = false;
+	slot->cart_name[0] = '\0';
+	slot->rom_size[0] = '\0';
+
+	if (dc_rom_read_header(slot->path, slot->title, sizeof(slot->title),
+			       &slot->is_cgb, &cart_type, &rom_size_code)) {
+		dc_rom_format_cart_info(cart_type, rom_size_code, slot->cart_name,
+					sizeof(slot->cart_name), slot->rom_size,
+					sizeof(slot->rom_size));
+	} else {
+		strncpy(slot->title, "Unknown", sizeof(slot->title) - 1);
+		slot->title[sizeof(slot->title) - 1] = '\0';
+		snprintf(slot->cart_name, sizeof(slot->cart_name), "?");
+		snprintf(slot->rom_size, sizeof(slot->rom_size), "?");
+	}
+
+	slot->has_save = false;
+	if (dc_save_path_from_rom(slot->path, save_path, sizeof(save_path)) == 0) {
+		FILE *save_file = fopen(save_path, "rb");
+
+		if (save_file) {
+			slot->has_save = true;
+			fclose(save_file);
+		}
+	}
+
+	(*count)++;
+}
+
+static void dc_browser_scan_directory(struct dc_browser *browser, const char *dir_path,
+				      int *count, bool *truncated, bool scan_subdirs)
 {
 	DIR *dir;
 	struct dirent *entry;
+
+	dir = opendir(dir_path);
+	if (!dir)
+		return;
+
+	while ((entry = readdir(dir)) != NULL) {
+		const char *name = entry->d_name;
+		bool maybe_dir;
+
+		if (name[0] == '.')
+			continue;
+
+		if (dc_has_rom_extension(name)) {
+			dc_browser_add_rom(browser, dir_path, name, count, truncated);
+			continue;
+		}
+
+		if (!scan_subdirs || dc_browser_skip_subdir_name(name))
+			continue;
+
+		maybe_dir = true;
+#ifdef DT_REG
+		if (entry->d_type == DT_REG)
+			maybe_dir = false;
+#endif
+#ifdef DT_DIR
+		if (entry->d_type == DT_DIR)
+			maybe_dir = true;
+#endif
+		if (maybe_dir) {
+			char sub_path[256];
+
+			snprintf(sub_path, sizeof(sub_path), "%s/%s", dir_path, name);
+			dc_browser_scan_directory(browser, sub_path, count, truncated,
+						  false);
+		}
+	}
+
+	closedir(dir);
+}
+
+int dc_browser_scan(struct dc_browser *browser)
+{
+	DIR *dir;
 	char previous_path[sizeof(browser->entries[0].path)];
 	char previous_name[sizeof(browser->entries[0].name)];
 	int count = 0;
@@ -436,70 +548,9 @@ int dc_browser_scan(struct dc_browser *browser)
 		return -1;
 	}
 
-	while ((entry = readdir(dir)) != NULL) {
-		struct dc_browser_entry *slot;
-		const char *name = entry->d_name;
-
-		if (name[0] == '.')
-			continue;
-		if (!dc_has_rom_extension(name))
-			continue;
-
-		if (count >= DC_BROWSER_MAX_ENTRIES) {
-			truncated = true;
-			continue;
-		}
-
-		slot = &browser->entries[count];
-		{
-			char save_path[256];
-
-			snprintf(slot->path, sizeof(slot->path), "%s/%s",
-				 browser->root_path, name);
-			strncpy(slot->name, name, sizeof(slot->name) - 1);
-			slot->name[sizeof(slot->name) - 1] = '\0';
-			slot->cover_ready = false;
-			slot->cover_from_file = false;
-			slot->cart_name[0] = '\0';
-			slot->rom_size[0] = '\0';
-			{
-				uint8_t cart_type = 0;
-				uint8_t rom_size_code = 0;
-
-				if (dc_rom_read_header(slot->path, slot->title,
-						       sizeof(slot->title),
-						       &slot->is_cgb, &cart_type,
-						       &rom_size_code)) {
-					dc_rom_format_cart_info(cart_type, rom_size_code,
-								slot->cart_name,
-								sizeof(slot->cart_name),
-								slot->rom_size,
-								sizeof(slot->rom_size));
-				} else {
-					strncpy(slot->title, "Unknown",
-						sizeof(slot->title) - 1);
-					slot->title[sizeof(slot->title) - 1] = '\0';
-					snprintf(slot->cart_name, sizeof(slot->cart_name),
-						 "?");
-					snprintf(slot->rom_size, sizeof(slot->rom_size),
-						 "?");
-				}
-			}
-			slot->has_save = false;
-			if (dc_save_path_from_rom(slot->path, save_path,
-						  sizeof(save_path)) == 0) {
-				FILE *save_file = fopen(save_path, "rb");
-
-				if (save_file) {
-					slot->has_save = true;
-					fclose(save_file);
-				}
-			}
-		}
-		count++;
-	}
-
 	closedir(dir);
+	dc_browser_scan_directory(browser, browser->root_path, &count, &truncated,
+				  true);
 	dc_browser_set_covers_path(browser);
 	browser->count = count;
 	qsort(browser->entries, (size_t)browser->count, sizeof(browser->entries[0]),
@@ -700,7 +751,7 @@ static void dc_browser_draw(const struct dc_browser *browser,
 		dc_ui_draw_text(screen, 96, 132, "No ROM files found.",
 				DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
 		dc_ui_draw_text(screen, 96, 160,
-				"Add .gb/.gbc files to this device path,",
+				"Add .gb/.gbc files to this device path or a subfolder,",
 				DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
 		dc_ui_draw_text(screen, 96, 184,
 				"then press Start to refresh the list.",

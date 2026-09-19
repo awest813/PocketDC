@@ -34,7 +34,7 @@ Shows a start screen, then the main menu with **Continue** (when the last played
 
 ### ROM library
 
-From the main menu, choose **ROM Library**. Scans these paths (press **B** to cycle devices):
+From the main menu, choose **ROM Library**. Scans these paths and **one level of subfolders** (press **B** to cycle devices). `covers`, `boxart`, and `saves` directories are skipped:
 
 | Path | Typical source |
 |------|----------------|

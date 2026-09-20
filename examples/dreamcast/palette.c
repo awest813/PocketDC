@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — DMG palette helpers.
+ * PocketDC Dreamcast frontend — DMG palette helpers.
  * Ported from examples/sdl2/walnut_sdl.c
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
@@ -43,8 +43,9 @@ static inline uint16_t rgb888_to_rgb555(uint32_t rgb)
 static void sgb_palette_to_rgb555(uint32_t palette_index, uint16_t *dst_rgb555)
 {
 	const uint32_t *src = &default32sgb_palettes[palette_index * 12];
+	unsigned int i;
 
-	for (unsigned i = 0; i < 12; i++)
+	for (i = 0; i < 12; i++)
 		dst_rgb555[i] = rgb888_to_rgb555(src[i]);
 }
 
@@ -172,8 +173,7 @@ void dc_manual_assign_palette(struct dc_priv *priv, uint8_t selection)
 		memcpy(priv->selected_palette, palette, palette_bytes);
 		break;
 	}
-	case 4:
-	default: {
+	case 4: {
 		const uint16_t palette[3][4] = {
 			{ 0x7FFF, 0x5294, 0x294A, 0x0000 },
 			{ 0x7FFF, 0x5294, 0x294A, 0x0000 },

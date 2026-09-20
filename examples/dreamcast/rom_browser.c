@@ -1,10 +1,11 @@
 /*
- * Walnut-CGB Dreamcast frontend — ROM browser and file I/O.
+ * PocketDC Dreamcast frontend — ROM browser and file I/O.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
 
 #include <dirent.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,12 +14,14 @@
 #include <kos.h>
 #include <dc/maple/controller.h>
 
+#include "audio.h"
 #include "input.h"
 #include "rom_browser.h"
 #include "settings.h"
 #include "toast.h"
 #include "ui.h"
 #include "video.h"
+#include "../../extras/zip_rom/zip_rom.h"
 
 #define DC_BROWSER_LINE_HEIGHT 22
 #define DC_BROWSER_LIST_TOP    68
@@ -38,6 +41,7 @@ struct dc_browser_root
 
 static char dc_browser_rom_hint[DC_SETTINGS_LAST_ROM_LEN];
 static char dc_browser_recent[DC_SETTINGS_RECENT_MAX][DC_SETTINGS_LAST_ROM_LEN];
+static char dc_browser_favorite[DC_SETTINGS_FAVORITE_MAX][DC_SETTINGS_LAST_ROM_LEN];
 
 static const struct dc_browser_root dc_browser_roots[] = {
 	{ "/cd/roms", "GD-ROM" },
@@ -61,6 +65,8 @@ static int dc_has_rom_extension(const char *name)
 	if (len >= 3 && strcasecmp(name + len - 3, ".gb") == 0)
 		return 1;
 	if (len >= 4 && strcasecmp(name + len - 4, ".gbc") == 0)
+		return 1;
+	if (len >= 4 && strcasecmp(name + len - 4, ".zip") == 0)
 		return 1;
 
 	return 0;
@@ -159,8 +165,10 @@ void dc_browser_apply_persisted(struct dc_browser *browser,
 	}
 
 	memcpy(dc_browser_recent, settings->recent_roms, sizeof(dc_browser_recent));
+	memcpy(dc_browser_favorite, settings->favorite_roms,
+	       sizeof(dc_browser_favorite));
 
-	if (settings->browser_filter <= DC_BROWSER_FILTER_GBC)
+	if (settings->browser_filter <= DC_BROWSER_FILTER_FAV)
 		browser->filter = (enum dc_browser_filter)settings->browser_filter;
 	else
 		browser->filter = DC_BROWSER_FILTER_ALL;
@@ -190,6 +198,23 @@ static void dc_browser_move_vertical(struct dc_browser *browser, int direction);
 static void dc_browser_move_horizontal(struct dc_browser *browser, int direction);
 static void dc_browser_rebuild_display(struct dc_browser *browser, int focus_entry);
 
+static bool dc_browser_path_is_favorite(const char *path)
+{
+	unsigned int i;
+
+	if (!path || path[0] == '\0')
+		return false;
+
+	for (i = 0; i < DC_SETTINGS_FAVORITE_MAX; i++) {
+		if (dc_browser_favorite[i][0] == '\0')
+			continue;
+		if (strcmp(dc_browser_favorite[i], path) == 0)
+			return true;
+	}
+
+	return false;
+}
+
 static const char *dc_browser_filter_label(enum dc_browser_filter filter)
 {
 	switch (filter) {
@@ -197,6 +222,8 @@ static const char *dc_browser_filter_label(enum dc_browser_filter filter)
 		return "DMG";
 	case DC_BROWSER_FILTER_GBC:
 		return "GBC";
+	case DC_BROWSER_FILTER_FAV:
+		return "Fav";
 	case DC_BROWSER_FILTER_ALL:
 	default:
 		return "All";
@@ -214,6 +241,8 @@ static bool dc_browser_entry_passes_filter(const struct dc_browser_entry *entry,
 		return !entry->is_cgb;
 	case DC_BROWSER_FILTER_GBC:
 		return entry->is_cgb;
+	case DC_BROWSER_FILTER_FAV:
+		return dc_browser_path_is_favorite(entry->path);
 	case DC_BROWSER_FILTER_ALL:
 	default:
 		return true;
@@ -269,7 +298,7 @@ static void dc_browser_rebuild_display(struct dc_browser *browser, int focus_ent
 
 	browser->display_count = 0;
 
-	if (browser->view == DC_BROWSER_VIEW_LIST) {
+	if (browser->filter != DC_BROWSER_FILTER_FAV) {
 		for (r = 0; r < DC_SETTINGS_RECENT_MAX; r++) {
 			const int entry_index =
 				dc_browser_find_entry_by_path(browser,
@@ -371,10 +400,125 @@ static void dc_browser_select_rom_hint(struct dc_browser *browser)
 	}
 }
 
-int dc_browser_scan(struct dc_browser *browser)
+static int dc_browser_skip_subdir_name(const char *name)
+{
+	if (!name || name[0] == '.')
+		return 1;
+	if (strcasecmp(name, "covers") == 0 || strcasecmp(name, "boxart") == 0 ||
+	    strcasecmp(name, "saves") == 0)
+		return 1;
+
+	return 0;
+}
+
+static void dc_browser_add_rom(struct dc_browser *browser, const char *dir_path,
+			      const char *name, int *count, bool *truncated)
+{
+	struct dc_browser_entry *slot;
+	char save_path[256];
+	uint8_t cart_type = 0;
+	uint8_t rom_size_code = 0;
+
+	if (*count >= DC_BROWSER_MAX_ENTRIES) {
+		*truncated = true;
+		return;
+	}
+
+	slot = &browser->entries[*count];
+	snprintf(slot->path, sizeof(slot->path), "%s/%s", dir_path, name);
+	if (strcmp(dir_path, browser->root_path) == 0) {
+		strncpy(slot->name, name, sizeof(slot->name) - 1);
+		slot->name[sizeof(slot->name) - 1] = '\0';
+	} else {
+		const char *rel = dir_path + strlen(browser->root_path);
+
+		if (*rel == '/')
+			rel++;
+		snprintf(slot->name, sizeof(slot->name), "%s/%s", rel, name);
+	}
+
+	slot->cover_ready = false;
+	slot->cover_from_file = false;
+	slot->is_zip = zip_rom_path_is_zip(slot->path);
+	slot->cart_name[0] = '\0';
+	slot->rom_size[0] = '\0';
+
+	if (dc_rom_read_header(slot->path, slot->title, sizeof(slot->title),
+			       &slot->is_cgb, &cart_type, &rom_size_code)) {
+		dc_rom_format_cart_info(cart_type, rom_size_code, slot->cart_name,
+					sizeof(slot->cart_name), slot->rom_size,
+					sizeof(slot->rom_size));
+	} else if (slot->is_zip) {
+		return;
+	} else {
+		strncpy(slot->title, "Unknown", sizeof(slot->title) - 1);
+		slot->title[sizeof(slot->title) - 1] = '\0';
+		snprintf(slot->cart_name, sizeof(slot->cart_name), "?");
+		snprintf(slot->rom_size, sizeof(slot->rom_size), "?");
+	}
+
+	slot->has_save = false;
+	if (dc_save_path_from_rom(slot->path, save_path, sizeof(save_path)) == 0) {
+		FILE *save_file = fopen(save_path, "rb");
+
+		if (save_file) {
+			slot->has_save = true;
+			fclose(save_file);
+		}
+	}
+
+	(*count)++;
+}
+
+static void dc_browser_scan_directory(struct dc_browser *browser, const char *dir_path,
+				      int *count, bool *truncated, bool scan_subdirs)
 {
 	DIR *dir;
 	struct dirent *entry;
+
+	dir = opendir(dir_path);
+	if (!dir)
+		return;
+
+	while ((entry = readdir(dir)) != NULL) {
+		const char *name = entry->d_name;
+		bool maybe_dir;
+
+		if (name[0] == '.')
+			continue;
+
+		if (dc_has_rom_extension(name)) {
+			dc_browser_add_rom(browser, dir_path, name, count, truncated);
+			continue;
+		}
+
+		if (!scan_subdirs || dc_browser_skip_subdir_name(name))
+			continue;
+
+		maybe_dir = true;
+#ifdef DT_REG
+		if (entry->d_type == DT_REG)
+			maybe_dir = false;
+#endif
+#ifdef DT_DIR
+		if (entry->d_type == DT_DIR)
+			maybe_dir = true;
+#endif
+		if (maybe_dir) {
+			char sub_path[256];
+
+			snprintf(sub_path, sizeof(sub_path), "%s/%s", dir_path, name);
+			dc_browser_scan_directory(browser, sub_path, count, truncated,
+						  false);
+		}
+	}
+
+	closedir(dir);
+}
+
+int dc_browser_scan(struct dc_browser *browser)
+{
+	DIR *dir;
 	char previous_path[sizeof(browser->entries[0].path)];
 	char previous_name[sizeof(browser->entries[0].name)];
 	int count = 0;
@@ -403,50 +547,20 @@ int dc_browser_scan(struct dc_browser *browser)
 	browser->scroll = 0;
 
 	dir = opendir(browser->root_path);
-	if (!dir)
+	if (!dir) {
+		char line[48];
+
+		snprintf(line, sizeof(line), "No media: %s",
+			 dc_browser_device_label(browser));
+		dc_toast_show(line, 1800);
 		return -1;
-
-	while ((entry = readdir(dir)) != NULL) {
-		struct dc_browser_entry *slot;
-		const char *name = entry->d_name;
-
-		if (name[0] == '.')
-			continue;
-		if (!dc_has_rom_extension(name))
-			continue;
-
-		if (count >= DC_BROWSER_MAX_ENTRIES) {
-			truncated = true;
-			continue;
-		}
-
-		slot = &browser->entries[count];
-		{
-			char save_path[256];
-
-			snprintf(slot->path, sizeof(slot->path), "%s/%s",
-				 browser->root_path, name);
-			strncpy(slot->name, name, sizeof(slot->name) - 1);
-			slot->name[sizeof(slot->name) - 1] = '\0';
-			slot->cover_ready = false;
-			slot->cover_from_file = false;
-			dc_rom_read_header(slot->path, slot->title, sizeof(slot->title),
-					   &slot->is_cgb, NULL);
-			slot->has_save = false;
-			if (dc_save_path_from_rom(slot->path, save_path,
-						  sizeof(save_path)) == 0) {
-				FILE *save_file = fopen(save_path, "rb");
-
-				if (save_file) {
-					slot->has_save = true;
-					fclose(save_file);
-				}
-			}
-		}
-		count++;
 	}
 
 	closedir(dir);
+	dc_audio_cdda_hold();
+	dc_browser_scan_directory(browser, browser->root_path, &count, &truncated,
+				  true);
+	dc_audio_cdda_release();
 	dc_browser_set_covers_path(browser);
 	browser->count = count;
 	qsort(browser->entries, (size_t)browser->count, sizeof(browser->entries[0]),
@@ -466,8 +580,22 @@ int dc_browser_scan(struct dc_browser *browser)
 	dc_browser_clamp_selected(browser);
 	dc_browser_update_scroll(browser);
 
-	if (truncated)
-		dc_toast_show("ROM list truncated (128 max)", 2000);
+	{
+		char line[48];
+
+		if (truncated)
+			dc_toast_show("ROM list truncated (128 max)", 2000);
+		else if (count == 0) {
+			snprintf(line, sizeof(line), "%s: no ROMs",
+				 dc_browser_device_label(browser));
+			dc_toast_show(line, 1600);
+		} else {
+			snprintf(line, sizeof(line), "%s: %d ROM%s",
+				 dc_browser_device_label(browser), count,
+				 count == 1 ? "" : "s");
+			dc_toast_show(line, 1400);
+		}
+	}
 
 	return count;
 }
@@ -475,18 +603,20 @@ int dc_browser_scan(struct dc_browser *browser)
 static void dc_browser_draw_header(const struct dc_browser *browser,
 				   uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH])
 {
+	char title[32];
 	char subtitle[96];
 
+	snprintf(title, sizeof(title), "ROM Library (%d)", browser->display_count);
 	snprintf(subtitle, sizeof(subtitle), "%s  %s  %s  %s",
 		 dc_browser_device_label(browser),
 		 dc_browser_filter_label(browser->filter),
 		 browser->view == DC_BROWSER_VIEW_GRID ? "Grid" : "List",
 		 browser->root_path);
 	subtitle[sizeof(subtitle) - 1] = '\0';
-	dc_ui_draw_header(screen, "ROM Library", subtitle);
+	dc_ui_draw_header(screen, title, subtitle);
 	dc_ui_draw_text_clipped(screen, DC_UI_MARGIN_X, DC_BROWSER_HELP_Y,
 				DC_SCREEN_WIDTH - DC_UI_MARGIN_X * 2,
-				"A:Load  B:Device  Y:View  L/R:Page  L+R:Filter  Start:Refresh  X:Back",
+				"A:Load B:Dev Y:View Start+Y:Fav L/R:Aa L+R:Filter Start:Scan X:Back",
 				DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
 }
 
@@ -512,12 +642,20 @@ static void dc_browser_draw_preview_panel(struct dc_browser *browser,
 	dc_ui_draw_text_ellipsis(screen, DC_BROWSER_PREVIEW_X + 8, 272,
 				 DC_SCREEN_WIDTH - DC_BROWSER_PREVIEW_X - 16,
 				 entry->name, DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
-	snprintf(line, sizeof(line), "%s%s%s",
+	snprintf(line, sizeof(line), "%s  %s  %s%s%s",
 		 entry->is_cgb ? "GBC" : "DMG",
+		 entry->cart_name[0] ? entry->cart_name : "?",
+		 entry->rom_size[0] ? entry->rom_size : "?",
 		 entry->has_save ? "  [SAV]" : "",
-		 entry->cover_from_file ? "  Box art" : "  Placeholder");
+		 entry->is_zip ? "  [ZIP]" : "");
 	dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 296, line,
 			DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
+	dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 316,
+			entry->cover_from_file ? "Box art" : "Placeholder",
+			DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
+	if (dc_browser_path_is_favorite(entry->path))
+		dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 336, "+ Favorite",
+				DC_UI_COLOR_WARN, DC_UI_COLOR_PANEL);
 }
 
 static void dc_browser_draw_list(const struct dc_browser *browser,
@@ -547,14 +685,24 @@ static void dc_browser_draw_list(const struct dc_browser *browser,
 				bg = DC_UI_COLOR_SELECT;
 			}
 
-			snprintf(line, sizeof(line), "%c%s %s%s",
+			snprintf(line, sizeof(line), "%c%c%c%s%s",
 				 index == browser->selected ? '>' : ' ',
-				 browser->display_recent[index] ? "*" : " ",
+				 browser->display_recent[index] ? '*' : ' ',
+				 dc_browser_path_is_favorite(entry->path) ? '+' : ' ',
 				 entry->title, entry->has_save ? " [SAV]" : "");
 			dc_ui_draw_text_ellipsis(screen, DC_BROWSER_LIST_LEFT + 8, y,
 						DC_BROWSER_LIST_WIDTH - 16, line, fg, bg);
 		}
 	}
+
+	if (browser->scroll > 0)
+		dc_ui_draw_text(screen, DC_BROWSER_LIST_LEFT + DC_BROWSER_LIST_WIDTH - 12,
+				DC_BROWSER_LIST_TOP - 12, "^", DC_UI_COLOR_ACCENT,
+				DC_UI_COLOR_BG);
+	if (browser->scroll + DC_BROWSER_LIST_LINES < browser->display_count)
+		dc_ui_draw_text(screen, DC_BROWSER_LIST_LEFT + DC_BROWSER_LIST_WIDTH - 12,
+				DC_UI_FOOTER_Y - 16, "v", DC_UI_COLOR_ACCENT,
+				DC_UI_COLOR_BG);
 
 	dc_browser_draw_preview_panel((struct dc_browser *)browser, screen);
 }
@@ -585,6 +733,12 @@ static void dc_browser_draw_grid(const struct dc_browser *browser,
 						DC_UI_COLOR_SELECT);
 
 			dc_cover_draw(screen, x + 10, y + 4, 80, 80, entry->cover);
+			if (browser->display_recent[index])
+				dc_ui_fill_rect(screen, x + 4, y + 4, 8, 8,
+						DC_UI_COLOR_ACCENT);
+			if (dc_browser_path_is_favorite(entry->path))
+				dc_ui_fill_rect(screen, x + 4, y + 14, 8, 8,
+						DC_UI_COLOR_WARN);
 			if (entry->has_save)
 				dc_ui_fill_rect(screen, x + 86, y + 4, 8, 8,
 						DC_UI_COLOR_SAVE);
@@ -608,7 +762,7 @@ static void dc_browser_draw(const struct dc_browser *browser,
 		dc_ui_draw_text(screen, 96, 132, "No ROM files found.",
 				DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
 		dc_ui_draw_text(screen, 96, 160,
-				"Add .gb/.gbc files to this device path,",
+				"Add .gb/.gbc/.zip files to this device path or a subfolder,",
 				DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
 		dc_ui_draw_text(screen, 96, 184,
 				"then press Start to refresh the list.",
@@ -616,17 +770,27 @@ static void dc_browser_draw(const struct dc_browser *browser,
 		dc_ui_draw_text(screen, 96, 220,
 				"Box art: covers/boxart/GB|GBC/ROMNAME.w555",
 				DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
+		dc_ui_draw_footer(screen, "B:Next device  Start:Refresh  X:Back");
 		dc_toast_draw(screen);
 		return;
 	}
 
 	if (browser->display_count == 0) {
 		dc_ui_draw_panel(screen, 72, 108, 496, 140, DC_UI_COLOR_PANEL);
-		dc_ui_draw_text(screen, 96, 132, "No ROMs match this filter.",
-				DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
-		dc_ui_draw_text(screen, 96, 160,
-				"Press L+R to cycle All / DMG / GBC.",
-				DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
+		if (browser->filter == DC_BROWSER_FILTER_FAV) {
+			dc_ui_draw_text(screen, 96, 132, "No favorites.",
+					DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
+			dc_ui_draw_text(screen, 96, 160,
+					"Start+Y to pin a ROM, then L+R for Fav.",
+					DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
+		} else {
+			dc_ui_draw_text(screen, 96, 132, "No ROMs match this filter.",
+					DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
+			dc_ui_draw_text(screen, 96, 160,
+					"Press L+R to cycle All / DMG / GBC / Fav.",
+					DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
+		}
+		dc_ui_draw_footer(screen, "L+R:Filter  B:Device  X:Back");
 		dc_toast_draw(screen);
 		return;
 	}
@@ -678,7 +842,7 @@ static void dc_browser_flush_input(void)
 static void dc_browser_poll_input(struct dc_browser *browser,
 				  struct dc_browser_input *input)
 {
-	maple_device_t *controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	maple_device_t *controller = (maple_device_t *)dc_input_controller();
 	uint32_t previous_buttons = dc_browser_previous_buttons;
 	int t_up = dc_browser_t_up;
 	int t_down = dc_browser_t_down;
@@ -700,6 +864,8 @@ static void dc_browser_poll_input(struct dc_browser *browser,
 		goto release;
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons))
+		arch_exit();
 	changed = buttons ^ previous_buttons;
 
 	vert = dc_input_axis((buttons & CONT_DPAD_UP) != 0,
@@ -719,15 +885,30 @@ static void dc_browser_poll_input(struct dc_browser *browser,
 		input->select = true;
 	if ((buttons & CONT_B) && (changed & CONT_B))
 		input->next_device = true;
-	if ((buttons & CONT_START) && (changed & CONT_START))
-		input->refresh = true;
 	if ((buttons & CONT_X) && (changed & CONT_X))
 		input->exit = true;
-	if ((buttons & CONT_Y) && (changed & CONT_Y))
-		input->toggle_view = true;
+	if ((buttons & CONT_Y) && (changed & CONT_Y)) {
+		if (buttons & CONT_START)
+			input->toggle_favorite = true;
+		else
+			input->toggle_view = true;
+	}
+	if ((buttons & CONT_START) && (changed & CONT_START)) {
+		if (buttons & CONT_Y)
+			input->toggle_favorite = true;
+		else
+			input->refresh = true;
+	}
 	if ((buttons & CONT_LTRIGGER) && (buttons & CONT_RTRIGGER) &&
-	    (changed & (CONT_LTRIGGER | CONT_RTRIGGER)))
+	    (changed & (CONT_LTRIGGER | CONT_RTRIGGER))) {
 		input->cycle_filter = true;
+	} else if ((buttons & CONT_LTRIGGER) && (changed & CONT_LTRIGGER) &&
+		   !(buttons & CONT_RTRIGGER)) {
+		input->jump_letter_prev = true;
+	} else if ((buttons & CONT_RTRIGGER) && (changed & CONT_RTRIGGER) &&
+		   !(buttons & CONT_LTRIGGER)) {
+		input->jump_letter_next = true;
+	}
 
 	dc_browser_previous_buttons = buttons;
 	dc_browser_t_up = t_up;
@@ -815,7 +996,7 @@ static void dc_browser_cycle_filter(struct dc_browser *browser)
 		focus_entry = browser->display_map[browser->selected];
 
 	browser->filter = (enum dc_browser_filter)((browser->filter + 1) %
-						   (DC_BROWSER_FILTER_GBC + 1));
+						   (DC_BROWSER_FILTER_FAV + 1));
 	dc_browser_rebuild_display(browser, focus_entry);
 	dc_browser_clamp_selected(browser);
 	dc_browser_update_scroll(browser);
@@ -848,8 +1029,82 @@ static void dc_browser_update_scroll(struct dc_browser *browser)
 		browser->scroll = browser->selected - visible + 1;
 }
 
-bool dc_browser_run(struct dc_browser *browser, char *selected_path,
-		    size_t selected_len)
+static char dc_browser_letter_from_name(const char *s)
+{
+	unsigned char c;
+
+	if (!s || s[0] == '\0')
+		return '#';
+
+	c = (unsigned char)s[0];
+	if (c >= 'a' && c <= 'z')
+		c = (unsigned char)(c - 'a' + 'A');
+	if (c >= 'A' && c <= 'Z')
+		return (char)c;
+
+	return '#';
+}
+
+static char dc_browser_entry_letter(const struct dc_browser_entry *entry)
+{
+	if (entry->title[0] != '\0' && strcmp(entry->title, "Unknown") != 0)
+		return dc_browser_letter_from_name(entry->title);
+
+	return dc_browser_letter_from_name(entry->name);
+}
+
+static char dc_browser_display_letter(const struct dc_browser *browser, int index)
+{
+	return dc_browser_entry_letter(&browser->entries[browser->display_map[index]]);
+}
+
+static void dc_browser_jump_letter(struct dc_browser *browser, int direction)
+{
+	int i;
+	char current;
+	char target;
+	int group_start;
+
+	if (!browser || browser->display_count <= 1)
+		return;
+
+	dc_browser_clamp_selected(browser);
+	current = dc_browser_display_letter(browser, browser->selected);
+
+	if (direction > 0) {
+		for (i = browser->selected + 1; i < browser->display_count; i++) {
+			if (dc_browser_display_letter(browser, i) != current) {
+				browser->selected = i;
+				return;
+			}
+		}
+		for (i = 0; i < browser->selected; i++) {
+			if (dc_browser_display_letter(browser, i) != current) {
+				browser->selected = i;
+				return;
+			}
+		}
+		return;
+	}
+
+	group_start = browser->selected;
+	while (group_start > 0 &&
+	       dc_browser_display_letter(browser, group_start - 1) == current)
+		group_start--;
+
+	i = group_start - 1;
+	if (i < 0)
+		i = browser->display_count - 1;
+
+	target = dc_browser_display_letter(browser, i);
+	while (i > 0 && dc_browser_display_letter(browser, i - 1) == target)
+		i--;
+
+	browser->selected = i;
+}
+
+bool dc_browser_run(struct dc_browser *browser, struct dc_settings *settings,
+		    char *selected_path, size_t selected_len)
 {
 	uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH];
 	bool dirty = true;
@@ -890,7 +1145,6 @@ bool dc_browser_run(struct dc_browser *browser, char *selected_path,
 			browser->root_path[sizeof(browser->root_path) - 1] = '\0';
 			dc_browser_set_covers_path(browser);
 			dc_browser_scan(browser);
-			dc_toast_show(dc_browser_device_label(browser), 1200);
 			dirty = true;
 		}
 
@@ -920,6 +1174,44 @@ bool dc_browser_run(struct dc_browser *browser, char *selected_path,
 		if (input.cycle_filter) {
 			dc_browser_cycle_filter(browser);
 			dc_toast_show(dc_browser_filter_label(browser->filter), 1000);
+			dirty = true;
+		}
+
+		if (input.toggle_favorite && settings) {
+			const struct dc_browser_entry *entry =
+				dc_browser_selected_entry(browser);
+			int result;
+
+			if (entry) {
+				int focus_entry = browser->display_map[browser->selected];
+
+				result = dc_settings_toggle_favorite(settings,
+								     entry->path);
+				if (result < 0) {
+					dc_toast_show("Favorites full (16)", 1600);
+				} else {
+					memcpy(dc_browser_favorite,
+					       settings->favorite_roms,
+					       sizeof(dc_browser_favorite));
+					dc_settings_save(settings);
+					if (browser->filter == DC_BROWSER_FILTER_FAV) {
+						dc_browser_rebuild_display(browser,
+									   focus_entry);
+						dc_browser_clamp_selected(browser);
+						dc_browser_update_scroll(browser);
+					}
+					dc_toast_show(result > 0 ? "Favorite added" :
+								   "Favorite removed",
+						      1200);
+				}
+				dirty = true;
+			}
+		}
+
+		if ((input.jump_letter_next || input.jump_letter_prev) &&
+		    browser->display_count > 0) {
+			dc_browser_jump_letter(browser,
+					       input.jump_letter_next ? 1 : -1);
 			dirty = true;
 		}
 
@@ -962,26 +1254,45 @@ bool dc_browser_run(struct dc_browser *browser, char *selected_path,
 	}
 }
 
-int dc_save_path_from_rom(const char *rom_path, char *save_path, size_t save_path_len)
+static int dc_path_replace_ext(const char *path, const char *ext, char *out,
+			       size_t out_len)
 {
 	const char *dot;
 	size_t base_len;
+	size_t ext_len;
 
-	if (!rom_path || !save_path || save_path_len == 0)
+	if (!path || !ext || !out || out_len == 0)
 		return -1;
 
-	dot = strrchr(rom_path, '.');
-	if (!dot || dot == rom_path)
-		base_len = strlen(rom_path);
+	ext_len = strlen(ext);
+	dot = strrchr(path, '.');
+	if (!dot || dot == path)
+		base_len = strlen(path);
 	else
-		base_len = (size_t)(dot - rom_path);
+		base_len = (size_t)(dot - path);
 
-	if (base_len + 4 + 1 > save_path_len)
+	if (base_len + ext_len + 1 > out_len)
 		return -1;
 
-	memcpy(save_path, rom_path, base_len);
-	memcpy(save_path + base_len, ".sav", 5);
+	memcpy(out, path, base_len);
+	memcpy(out + base_len, ext, ext_len + 1);
 	return 0;
+}
+
+int dc_save_path_from_rom(const char *rom_path, char *save_path, size_t save_path_len)
+{
+	return dc_path_replace_ext(rom_path, ".sav", save_path, save_path_len);
+}
+
+int dc_rtc_path_from_save(const char *save_path, char *rtc_path, size_t rtc_path_len)
+{
+	return dc_path_replace_ext(save_path, ".rtc", rtc_path, rtc_path_len);
+}
+
+int dc_state_path_from_save(const char *save_path, char *state_path,
+			    size_t state_path_len)
+{
+	return dc_path_replace_ext(save_path, ".ss0", state_path, state_path_len);
 }
 
 int dc_rom_load(struct dc_priv *priv, const char *rom_path)
@@ -991,6 +1302,27 @@ int dc_rom_load(struct dc_priv *priv, const char *rom_path)
 
 	if (!priv || !rom_path)
 		return -1;
+
+	if (zip_rom_path_is_zip(rom_path)) {
+		uint8_t *data = NULL;
+		size_t unzipped = 0;
+
+		if (zip_rom_extract(rom_path, &data, &unzipped) != 0 ||
+		    unzipped < DC_ROM_HEADER_SIZE || unzipped > ZIP_ROM_MAX_SIZE) {
+			free(data);
+			printf("pocketdc: unable to extract ROM from '%s'\n", rom_path);
+			return -1;
+		}
+
+		priv->rom = data;
+		priv->rom_size = unzipped;
+		strncpy(priv->rom_path, rom_path, sizeof(priv->rom_path) - 1);
+		priv->rom_path[sizeof(priv->rom_path) - 1] = '\0';
+		if (dc_save_path_from_rom(rom_path, priv->save_path,
+					  sizeof(priv->save_path)) != 0)
+			priv->save_path[0] = '\0';
+		return 0;
+	}
 
 	f = fopen(rom_path, "rb");
 	if (!f) {
@@ -1056,6 +1388,9 @@ int dc_cart_ram_read_file(const char *save_path, uint8_t **dest, size_t len)
 {
 	FILE *f;
 
+	if (!dest)
+		return -1;
+
 	if (len == 0) {
 		*dest = NULL;
 		return 0;
@@ -1064,6 +1399,9 @@ int dc_cart_ram_read_file(const char *save_path, uint8_t **dest, size_t len)
 	*dest = (uint8_t *)calloc(1, len);
 	if (!*dest)
 		return -1;
+
+	if (!save_path || save_path[0] == '\0')
+		return 0;
 
 	f = fopen(save_path, "rb");
 	if (!f)
@@ -1144,6 +1482,72 @@ int dc_cart_ram_write_file(const char *save_path, const uint8_t *data, size_t le
 	remove(save_path);
 	if (rename(tmp_path, save_path) != 0) {
 		printf("pocketdc: unable to finalize save '%s'\n", save_path);
+		remove(tmp_path);
+		return -1;
+	}
+
+	return 0;
+}
+
+#define DC_RTC_MAGIC 0x31434450u /* "PDC1" little-endian */
+
+int dc_rtc_read_file(const char *rtc_path, uint8_t real[5], uint8_t latched[5],
+		     uint32_t *unix_sec)
+{
+	FILE *f;
+	uint32_t magic = 0;
+	uint32_t stamp = 0;
+
+	if (!rtc_path || !real || !latched)
+		return -1;
+
+	f = fopen(rtc_path, "rb");
+	if (!f)
+		return -1;
+
+	if (fread(&magic, 1, sizeof(magic), f) != sizeof(magic) ||
+	    magic != DC_RTC_MAGIC ||
+	    fread(real, 1, 5, f) != 5 ||
+	    fread(latched, 1, 5, f) != 5 ||
+	    fread(&stamp, 1, sizeof(stamp), f) != sizeof(stamp)) {
+		fclose(f);
+		return -1;
+	}
+
+	fclose(f);
+	if (unix_sec)
+		*unix_sec = stamp;
+	return 0;
+}
+
+int dc_rtc_write_file(const char *rtc_path, const uint8_t real[5],
+		      const uint8_t latched[5], uint32_t unix_sec)
+{
+	char tmp_path[272];
+	FILE *f;
+	const uint32_t magic = DC_RTC_MAGIC;
+
+	if (!rtc_path || !real || !latched)
+		return -1;
+
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", rtc_path);
+	f = fopen(tmp_path, "wb");
+	if (!f)
+		return -1;
+
+	if (fwrite(&magic, 1, sizeof(magic), f) != sizeof(magic) ||
+	    fwrite(real, 1, 5, f) != 5 ||
+	    fwrite(latched, 1, 5, f) != 5 ||
+	    fwrite(&unix_sec, 1, sizeof(unix_sec), f) != sizeof(unix_sec) ||
+	    fflush(f) != 0) {
+		fclose(f);
+		remove(tmp_path);
+		return -1;
+	}
+
+	fclose(f);
+	remove(rtc_path);
+	if (rename(tmp_path, rtc_path) != 0) {
 		remove(tmp_path);
 		return -1;
 	}

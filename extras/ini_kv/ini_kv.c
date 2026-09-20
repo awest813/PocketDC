@@ -51,6 +51,10 @@ static bool ini_kv_key_match(const char *line, const char *key, const char **val
 		return false;
 
 	p += key_len;
+	/* Reject prefix matches such as "volume" vs "volume_max". */
+	if (*p != '\0' && *p != '=' && !isspace((unsigned char)*p))
+		return false;
+
 	p = ini_kv_skip_space(p);
 	if (*p != '=')
 		return false;

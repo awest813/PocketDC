@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — transient on-screen messages.
+ * PocketDC Dreamcast frontend — transient on-screen messages.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

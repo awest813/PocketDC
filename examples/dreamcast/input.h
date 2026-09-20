@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — Maple controller input.
+ * PocketDC Dreamcast frontend — Maple controller input.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -26,8 +26,11 @@ struct dc_input_state
 	bool cycle_palette;
 	bool toggle_frameskip;
 	bool cycle_scale;
+	bool system_exit;
 	unsigned int fast_mode;
 };
+
+struct maple_device *dc_input_controller(void);
 
 void dc_input_init(void);
 /** Clear held-button edge state after context switches (game ↔ menu). */
@@ -52,5 +55,8 @@ int dc_input_repeat_axis(int axis, int *timer, int *last_axis);
 
 /** Fire once when an axis leaves neutral; resets when the axis returns to 0. */
 int dc_input_axis_edge(int axis, int *last_axis);
+
+/** True when A+B+X+Y+Start are held (Dreamcast soft-reset convention). */
+bool dc_input_quit_combo(uint32_t buttons);
 
 #endif /* DC_INPUT_H */

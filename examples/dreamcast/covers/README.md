@@ -73,4 +73,4 @@ pip install pillow
 ## Credits
 
 - Box art images: [xero/boxart](https://github.com/xero/boxart) (CC0), sourced from [ScreenScraper](https://screenscraper.fr)
-- `.w555` conversion and ROM matching: Walnut-CGB Dreamcast frontend
+- `.w555` conversion and ROM matching: PocketDC Dreamcast frontend

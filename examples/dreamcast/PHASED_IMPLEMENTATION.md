@@ -1,6 +1,6 @@
 # PocketDC — Phased Implementation
 
-This document tracks the implementation plan for **PocketDC**, a Dreamcast port of **Walnut-CGB** via **KallistiOS (KOS)**. The core library (`walnut_cgb.h`) stays unchanged; all platform work lives in `examples/dreamcast/`.
+This document tracks the implementation plan for **PocketDC**, a Dreamcast port of **Walnut-CGB** via **KallistiOS (KOS)**. Platform work lives in `examples/dreamcast/`. The core (`walnut_cgb.h`) includes an MIT savestate API (`gb_serialize` / `gb_deserialize`); PocketDC writes slot 0 as `.ss0` beside the ROM.
 
 ## Feasibility Summary
 
@@ -118,14 +118,17 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 
 ## Phase 3 — ROM Browser & Polish
 
-- [x] Directory scanner for `/cd`, `/sd`, `/ide`, `/pc`
+- [x] Directory scanner for `/cd`, `/sd`, `/ide`, `/pc` (one subfolder level)
 - [x] Simple text UI for ROM selection
 - [x] Boot disc metadata (`IP.BIN` template, `scripts/build-disc.sh`)
 - [x] Palette cycling (Y button) and fast-forward (triggers)
 - [x] Frameskip toggle (Start + X)
 - [x] Start+B returns to main menu when launched without ROM argument
 - [x] Start screen and main menu (Continue, ROM Library, Settings, Controls, Exit)
-- [x] Recent ROM history and DMG/GBC filter in ROM browser
+- [x] Recent ROM history and DMG/GBC/Fav filter in ROM browser
+- [x] ROM library favorites (Start+Y) and L/R letter jump
+- [x] ZIP ROM loading (store/deflate, first `.gb`/`.gbc` member)
+- [x] CDDA menu music (disc audio tracks; Settings toggle)
 - [x] Config migration from `walnut-dc.cfg` to `pocketdc.cfg`
 - [x] Pause menu with manual save/load (Start + Y)
 - [x] Persistent settings (`pocketdc.cfg`) with live apply for video/audio
@@ -133,6 +136,9 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 - [x] Scale modes, status bar HUD, volume/mute, audio buffer modes
 - [x] Toast notifications and controls reference screen
 - [x] Atomic `.sav` writes, pause load with `gb_reset()`, save error feedback
+- [x] MBC3 RTC `.rtc` sidecar with wall-clock catch-up
+- [x] Pause-menu erase save, 4× fast-forward (L+R), extra boot ROM search paths
+- [x] MIT `gb_serialize` API and pause-menu Save/Load State (`.ss0`)
 - [ ] Burn test: self-bootable CDI/GDI on hardware
 
 **Deliverable:** Self-contained CDI/GDI image without PC assistance.
@@ -166,9 +172,11 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 | Start + Y | Pause menu |
 | Start + B | Exit to main menu (menu mode) |
 | Start + X | Toggle frameskip |
-| Start + L | Cycle scale mode |
+| Start + L | Cycle scale mode (does not fast-forward) |
 | Y | Cycle palette |
-| L / R trigger | Fast-forward (2×) |
+| A+B+X+Y+Start | Quit to Dreamcast loader |
+| L / R trigger | Fast-forward (2×; ignored while Start is held) |
+| L + R trigger | Fast-forward 4× |
 
 ---
 
@@ -176,7 +184,7 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 
 | Layer | Method |
 |-------|--------|
-| Core accuracy | Host `make -C test` (core); `make -C test ci` runs `extras_test` for `ini_kv`, `audio_processor`, and `audio_ring` |
+| Core accuracy | Host `make -C test` (core); `make -C test ci` runs `extras_test` for `ini_kv`, `audio_processor`, `audio_ring`, `zip_rom`, and `gb_serialize` |
 | DC build | `sh-elf-gcc -Wall -Wextra` clean compile |
 | Functional | cpu_instrs, dmg-acid2 via dcload |
 | Game spot-checks | Tetris, Pokémon Blue, Oracle of Seasons, Shantae |

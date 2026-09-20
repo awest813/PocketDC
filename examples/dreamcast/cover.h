@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — ROM cover art.
+ * PocketDC Dreamcast frontend — ROM cover art.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -17,7 +17,10 @@
 #define DC_COVER_HEIGHT 96
 
 bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
-			bool *is_cgb, uint8_t *cart_type);
+			bool *is_cgb, uint8_t *cart_type, uint8_t *rom_size_code);
+void dc_rom_format_cart_info(uint8_t cart_type, uint8_t rom_size_code,
+			     char *cart_out, size_t cart_len,
+			     char *size_out, size_t size_len);
 void dc_cover_path_for_rom(const char *rom_path, const char *covers_root,
 			   char *cover_path, size_t cover_path_len);
 bool dc_cover_load_file(const char *cover_path,

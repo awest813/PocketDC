@@ -1,11 +1,14 @@
 /*
- * Walnut-CGB Dreamcast frontend — start, main, pause, and settings menus.
+ * PocketDC Dreamcast frontend — start, main, pause, and settings menus.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
 
 #include <stdio.h>
 #include <string.h>
+#ifdef _arch_dreamcast
+#include <malloc.h>
+#endif
 
 #include <kos.h>
 #include <dc/maple/controller.h>
@@ -18,6 +21,7 @@
 #include "toast.h"
 #include "ui.h"
 #include "video.h"
+#include "../../version.all"
 
 #define DC_SETTINGS_LINE_HEIGHT 22
 #define DC_SETTINGS_LIST_TOP    72
@@ -59,7 +63,7 @@ static void dc_menu_flush_input(void)
 
 static void dc_menu_poll_input(struct dc_menu_input *input)
 {
-	maple_device_t *controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	maple_device_t *controller = (maple_device_t *)dc_input_controller();
 	uint32_t previous_buttons = dc_menu_previous_buttons;
 	int t_up = dc_menu_t_up;
 	int t_down = dc_menu_t_down;
@@ -77,6 +81,8 @@ static void dc_menu_poll_input(struct dc_menu_input *input)
 		goto release;
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons))
+		arch_exit();
 	changed = buttons ^ previous_buttons;
 
 	vert = dc_input_axis((buttons & CONT_DPAD_UP) != 0,
@@ -190,15 +196,34 @@ static int dc_menu_run_list(struct dc_menu_list *menu, const char *footer)
 static void dc_menu_draw_splash(uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH],
 				const char *prompt)
 {
+	char version[24];
+	char ram_line[32];
+
+	snprintf(version, sizeof(version), "v%d.%d.%d",
+		 WALNUTGB_VERSION_MAJOR, WALNUTGB_VERSION_MINOR,
+		 WALNUTGB_VERSION_PATCH);
+#ifdef _arch_dreamcast
+	{
+		struct mallinfo mi = mallinfo();
+
+		snprintf(ram_line, sizeof(ram_line), "Heap %dK used",
+			 (int)(mi.uordblks / 1024));
+	}
+#else
+	snprintf(ram_line, sizeof(ram_line), "16 MB SH-4");
+#endif
+
 	dc_ui_clear(screen, DC_UI_COLOR_BG);
-	dc_ui_fill_rect(screen, 0, 180, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
-	dc_ui_draw_text(screen, 176, 200, "PocketDC", DC_UI_COLOR_TITLE, DC_UI_COLOR_BG);
-	dc_ui_draw_text(screen, 120, 232, "Game Boy / Game Boy Color",
+	dc_ui_fill_rect(screen, 0, 168, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
+	dc_ui_draw_text(screen, 176, 188, "PocketDC", DC_UI_COLOR_TITLE, DC_UI_COLOR_BG);
+	dc_ui_draw_text(screen, 120, 220, "Game Boy / Game Boy Color",
 			DC_UI_COLOR_FG, DC_UI_COLOR_BG);
-	dc_ui_draw_text(screen, 168, 264, "Dreamcast Edition", DC_UI_COLOR_DIM,
+	dc_ui_draw_text(screen, 168, 248, "Dreamcast Edition", DC_UI_COLOR_DIM,
 			DC_UI_COLOR_BG);
-	dc_ui_fill_rect(screen, 0, 300, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
-	dc_ui_draw_text(screen, 200, 340, prompt, DC_UI_COLOR_FG, DC_UI_COLOR_BG);
+	dc_ui_draw_text(screen, 232, 272, version, DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
+	dc_ui_draw_text(screen, 200, 296, ram_line, DC_UI_COLOR_DIM, DC_UI_COLOR_BG);
+	dc_ui_fill_rect(screen, 0, 324, DC_SCREEN_WIDTH, 4, DC_UI_COLOR_ACCENT);
+	dc_ui_draw_text(screen, 200, 360, prompt, DC_UI_COLOR_FG, DC_UI_COLOR_BG);
 }
 
 bool dc_start_menu_run(void)
@@ -236,21 +261,46 @@ void dc_menu_show_message(const char *title, const char *message, int duration_m
 	uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH];
 	const uint64_t end_time = timer_ms_gettime64() + (uint64_t)duration_ms;
 
+	dc_menu_flush_input();
 	dc_ui_clear(screen, DC_UI_COLOR_BG);
 	dc_ui_draw_header(screen, title ? title : "PocketDC", NULL);
 	dc_ui_draw_text(screen, 120, 220, message ? message : "", DC_UI_COLOR_FG,
 			DC_UI_COLOR_BG);
+	dc_ui_draw_footer(screen, "A/B:Continue");
 
 	while (timer_ms_gettime64() < end_time) {
+		struct dc_menu_input input;
+
 		dc_video_present_screen(screen);
+		dc_menu_poll_input(&input);
+		if (input.select || input.back)
+			break;
 		timer_spin(DC_INPUT_FRAME_MS);
 	}
+}
+
+static bool dc_menu_confirm(const char *title, const char *message)
+{
+	const char *items[2];
+	struct dc_menu_list menu = {
+		.title = title ? title : "Confirm",
+		.subtitle = message,
+		.items = items,
+		.count = 2,
+		.selected = 1
+	};
+	int choice;
+
+	items[0] = "Yes";
+	items[1] = "No";
+	choice = dc_menu_run_list(&menu, "A:Select  B:No");
+	return choice == 0;
 }
 
 enum dc_main_menu_action dc_main_menu_run(const struct dc_settings *settings)
 {
 	char continue_label[DC_SETTINGS_LAST_ROM_LEN + 16];
-	const char *items[5];
+	const char *items[6];
 	struct dc_menu_list menu = {
 		.title = "PocketDC",
 		.subtitle = "Main Menu",
@@ -258,63 +308,95 @@ enum dc_main_menu_action dc_main_menu_run(const struct dc_settings *settings)
 		.count = 0,
 		.selected = 0
 	};
-	const bool show_continue = settings && dc_settings_can_continue(settings);
-	int choice;
 
-	if (show_continue) {
-		dc_settings_continue_label(settings, continue_label,
-					   sizeof(continue_label));
-		items[menu.count++] = continue_label;
-	}
+	while (1) {
+		const bool show_continue = settings && dc_settings_can_continue(settings);
+		int choice;
+		enum dc_main_menu_action action;
 
-	items[menu.count++] = "ROM Library";
-	items[menu.count++] = "Settings";
-	items[menu.count++] = "Controls";
-	items[menu.count++] = "Exit";
-
-	choice = dc_menu_run_list(&menu, "A:Select  B:Exit");
-	if (choice < 0)
-		return DC_MAIN_MENU_EXIT;
-
-	if (show_continue) {
-		switch (choice) {
-		case 0:
-			return DC_MAIN_MENU_CONTINUE;
-		case 1:
-			return DC_MAIN_MENU_ROM_LIBRARY;
-		case 2:
-			return DC_MAIN_MENU_SETTINGS;
-		case 3:
-			return DC_MAIN_MENU_CONTROLS;
-		default:
-			return DC_MAIN_MENU_EXIT;
+		menu.count = 0;
+		if (show_continue) {
+			dc_settings_continue_label(settings, continue_label,
+						   sizeof(continue_label));
+			items[menu.count++] = continue_label;
 		}
-	}
 
-	switch (choice) {
-	case 0:
-		return DC_MAIN_MENU_ROM_LIBRARY;
-	case 1:
-		return DC_MAIN_MENU_SETTINGS;
-	case 2:
-		return DC_MAIN_MENU_CONTROLS;
-	default:
-		return DC_MAIN_MENU_EXIT;
+		items[menu.count++] = "ROM Library";
+		items[menu.count++] = "Settings";
+		items[menu.count++] = "Controls";
+		items[menu.count++] = "About";
+		items[menu.count++] = "Exit";
+
+		choice = dc_menu_run_list(&menu, "A:Select  B:Exit");
+		if (choice < 0)
+			action = DC_MAIN_MENU_EXIT;
+		else if (show_continue) {
+			switch (choice) {
+			case 0:
+				action = DC_MAIN_MENU_CONTINUE;
+				break;
+			case 1:
+				action = DC_MAIN_MENU_ROM_LIBRARY;
+				break;
+			case 2:
+				action = DC_MAIN_MENU_SETTINGS;
+				break;
+			case 3:
+				action = DC_MAIN_MENU_CONTROLS;
+				break;
+			case 4:
+				action = DC_MAIN_MENU_ABOUT;
+				break;
+			default:
+				action = DC_MAIN_MENU_EXIT;
+				break;
+			}
+		} else {
+			switch (choice) {
+			case 0:
+				action = DC_MAIN_MENU_ROM_LIBRARY;
+				break;
+			case 1:
+				action = DC_MAIN_MENU_SETTINGS;
+				break;
+			case 2:
+				action = DC_MAIN_MENU_CONTROLS;
+				break;
+			case 3:
+				action = DC_MAIN_MENU_ABOUT;
+				break;
+			default:
+				action = DC_MAIN_MENU_EXIT;
+				break;
+			}
+		}
+
+		if (action == DC_MAIN_MENU_EXIT) {
+			if (dc_menu_confirm("Exit PocketDC", "Return to Dreamcast?"))
+				return DC_MAIN_MENU_EXIT;
+			continue;
+		}
+
+		return action;
 	}
 }
 
 enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save,
-					    bool can_load)
+					    bool can_load, bool can_save_state,
+					    bool can_load_state, bool menu_mode)
 {
 	char subtitle[80];
 	char paused_line[80];
-	const char *items[6];
+	const char *items[12];
 	struct dc_menu_list menu;
 	int choice;
 	int save_idx = -1;
 	int load_idx = -1;
+	int erase_idx = -1;
+	int save_state_idx = -1;
+	int load_state_idx = -1;
 	int settings_idx;
-	int main_menu_idx;
+	int main_menu_idx = -1;
 	int exit_idx;
 	int i = 0;
 
@@ -332,13 +414,25 @@ enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save
 	if (can_load) {
 		load_idx = i;
 		items[i++] = "Load Game";
+		erase_idx = i;
+		items[i++] = "Erase Save";
+	}
+	if (can_save_state) {
+		save_state_idx = i;
+		items[i++] = "Save State";
+	}
+	if (can_load_state) {
+		load_state_idx = i;
+		items[i++] = "Load State";
 	}
 	settings_idx = i;
 	items[i++] = "Settings";
-	main_menu_idx = i;
-	items[i++] = "Main Menu";
+	if (menu_mode) {
+		main_menu_idx = i;
+		items[i++] = "Main Menu";
+	}
 	exit_idx = i;
-	items[i++] = "Exit Game";
+	items[i++] = "Exit PocketDC";
 
 	menu.title = "Pause Menu";
 	menu.subtitle = subtitle;
@@ -356,6 +450,15 @@ enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save
 		return DC_PAUSE_MENU_SAVE;
 	if (choice == load_idx)
 		return DC_PAUSE_MENU_LOAD;
+	if (choice == erase_idx) {
+		if (!dc_menu_confirm("Erase Save", "Delete SRAM and clock data?"))
+			return DC_PAUSE_MENU_NONE;
+		return DC_PAUSE_MENU_ERASE;
+	}
+	if (choice == save_state_idx)
+		return DC_PAUSE_MENU_SAVE_STATE;
+	if (choice == load_state_idx)
+		return DC_PAUSE_MENU_LOAD_STATE;
 	if (choice == settings_idx)
 		return DC_PAUSE_MENU_SETTINGS;
 	if (choice == main_menu_idx)
@@ -441,25 +544,35 @@ void dc_controls_menu_run(void)
 		"Start+X = Toggle frameskip",
 		"Start+L = Cycle scale mode",
 		"Y = Cycle palette",
-		"L/R trigger = Fast-forward (2x)",
+		"L/R trigger = Fast-forward (2x, both = 4x)",
 		"",
 		"Pause Menu",
 		"Save Game = write .sav alongside ROM",
 		"Load Game = reload .sav and reset",
+		"Erase Save = delete .sav/.rtc (confirm)",
+		"Save State = write .ss0 snapshot (MIT serialize)",
+		"Load State = restore .ss0 (same ROM only)",
+		"Main Menu = leave game (menu launch)",
+		"Exit PocketDC = quit the emulator",
 		"Autosave interval in Settings (default 60s)",
 		"",
 		"Main Menu",
 		"Continue = last played ROM (when available)",
+		"About = credits and conventions",
+		"A+B+X+Y+Start = quit to Dreamcast",
 		"",
 		"Settings (main or pause menu)",
 		"Video output, scale, status bar, audio",
+		"Menu music = CDDA tracks on the disc",
 		"Autosave on/off and interval",
 		"Changes apply immediately",
 		"",
 		"ROM Library",
 		"A = Load  B = Next device  Y = Grid/List",
-		"Left/Right = Page  L+R = Filter  Start = Refresh  X = Back",
-		"* = Recent ROM (list view)"
+		"Start+Y = Pin/unpin favorite  L/R = Jump letter",
+		"Left/Right = Page  L+R = Filter  Start = Scan  X = Back",
+		"* = Recent  + / yellow mark = Favorite",
+		".zip ROMs (first .gb/.gbc inside) are listed"
 	};
 	const unsigned int line_count = sizeof(lines) / sizeof(lines[0]);
 	const int visible_lines =
@@ -468,6 +581,8 @@ void dc_controls_menu_run(void)
 	int scroll = 0;
 	uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH];
 	bool dirty = true;
+
+	dc_menu_flush_input();
 
 	while (1) {
 		const uint64_t frame_start = timer_ms_gettime64();
@@ -483,6 +598,106 @@ void dc_controls_menu_run(void)
 
 		if (dirty) {
 			dc_controls_draw(screen, lines, line_count, scroll);
+			dc_video_present_screen(screen);
+			dirty = false;
+		}
+
+		dc_menu_poll_input(&input);
+		if (input.back)
+			return;
+
+		if (input.up) {
+			scroll--;
+			if (scroll < 0)
+				scroll = 0;
+			dirty = true;
+		}
+
+		if (input.down) {
+			scroll++;
+			if (scroll > max_scroll)
+				scroll = max_scroll;
+			dirty = true;
+		}
+
+		elapsed = timer_ms_gettime64() - frame_start;
+		if (elapsed < DC_INPUT_FRAME_MS)
+			timer_spin((int)(DC_INPUT_FRAME_MS - elapsed));
+	}
+}
+
+void dc_about_menu_run(void)
+{
+	static const char *lines[] = {
+		"PocketDC",
+		"Dreamcast Game Boy / GBC emulator",
+		"",
+		"Core",
+		"Walnut-CGB (Peanut-GB lineage)",
+		"MiniGB APU for sound",
+		"",
+		"Frontend",
+		"KallistiOS  PVR  AICA  Maple",
+		"audio_processor  audio_ring  ini_kv  zip_rom",
+		"gb_serialize savestates (.ss0, MIT)",
+		"",
+		"Conventions",
+		"A+B+X+Y+Start = quit to loader",
+		"B in menus = back",
+		"Start+Y in library = favorite",
+		"Disc CDDA plays in menus when present",
+		"MBC3 clock stored as .rtc beside .sav",
+		"",
+		"MIT License. Do not distribute ROMs."
+	};
+	const unsigned int line_count = sizeof(lines) / sizeof(lines[0]);
+	const int visible_lines =
+		(DC_UI_FOOTER_Y - DC_UI_CONTENT_TOP) / DC_CONTROLS_LINE_HEIGHT;
+	const int total_lines = dc_controls_count_lines(lines, line_count);
+	int scroll = 0;
+	uint16_t screen[DC_SCREEN_HEIGHT][DC_SCREEN_WIDTH];
+	bool dirty = true;
+
+	dc_menu_flush_input();
+
+	while (1) {
+		const uint64_t frame_start = timer_ms_gettime64();
+		struct dc_menu_input input;
+		uint64_t elapsed;
+		int max_scroll;
+
+		max_scroll = total_lines - visible_lines;
+		if (max_scroll < 0)
+			max_scroll = 0;
+		if (scroll > max_scroll)
+			scroll = max_scroll;
+
+		if (dirty) {
+			unsigned int i;
+			int line_index = 0;
+			int y = DC_UI_CONTENT_TOP;
+
+			dc_ui_clear(screen, DC_UI_COLOR_BG);
+			dc_ui_draw_header(screen, "About", "Credits");
+			dc_ui_draw_footer(screen, "Up/Dn:Scroll  B:Back");
+			for (i = 0; i < line_count; i++) {
+				uint16_t color = DC_UI_COLOR_FG;
+
+				if (lines[i][0] == '\0')
+					continue;
+				if (line_index < scroll) {
+					line_index++;
+					continue;
+				}
+				if (y + 8 > DC_UI_FOOTER_Y)
+					break;
+				if (dc_controls_is_section_title(lines, i))
+					color = DC_UI_COLOR_TITLE;
+				dc_ui_draw_text(screen, 24, y, lines[i], color,
+						DC_UI_COLOR_BG);
+				y += DC_CONTROLS_LINE_HEIGHT;
+				line_index++;
+			}
 			dc_video_present_screen(screen);
 			dirty = false;
 		}
@@ -540,6 +755,7 @@ static void dc_settings_format_row(const struct dc_settings *settings, int row,
 		"Autosave",
 		"Autosave interval",
 		"Volume",
+		"Menu music",
 		"Audio buffer"
 	};
 	const char marker = selected ? '>' : ' ';
@@ -571,7 +787,7 @@ static void dc_settings_format_row(const struct dc_settings *settings, int row,
 		break;
 	case 6:
 		if (!settings->autosave_enabled) {
-			snprintf(line, line_len, "%c %s: —", marker, labels[row]);
+			snprintf(line, line_len, "%c %s: n/a", marker, labels[row]);
 			break;
 		}
 		snprintf(line, line_len, "%c %s: %d sec", marker, labels[row],
@@ -581,6 +797,10 @@ static void dc_settings_format_row(const struct dc_settings *settings, int row,
 		snprintf(line, line_len, "%c %s: %s%u%%", marker, labels[row],
 			 settings->muted ? "Mute " : "",
 			 settings->muted ? 0U : settings->volume);
+		break;
+	case 8:
+		snprintf(line, line_len, "%c %s: %s", marker, labels[row],
+			 settings->menu_music ? "On" : "Off");
 		break;
 	default:
 		snprintf(line, line_len, "%c %s: %s", marker, labels[row],
@@ -623,13 +843,107 @@ static void dc_settings_draw_value_screen(const struct dc_settings *settings,
 		dc_ui_draw_text_clipped(screen, 32, y, DC_SCREEN_WIDTH - 48, line, fg, bg);
 	}
 
-	dc_ui_draw_footer(screen, "Up/Dn:Row  L/R:Change  A:Mute(vol)  B:Back");
+	dc_ui_draw_footer(screen, "Up/Dn:Row  L/R:Change  A:Toggle  B:Back");
 	dc_toast_draw(screen);
 }
 
 static bool dc_settings_row_is_toggle(int row)
 {
-	return row == 3 || row == 4 || row == 5;
+	return row == 3 || row == 4 || row == 5 || row == 8;
+}
+
+static void dc_settings_nudge_row(struct dc_settings *settings, int *selected_row,
+				  int inc)
+{
+	char toast_line[48];
+
+	switch (*selected_row) {
+	case 0:
+		settings->palette_index =
+			(uint8_t)((settings->palette_index + inc + DC_PALETTE_COUNT) %
+				  DC_PALETTE_COUNT);
+		dc_toast_show(dc_palette_name(settings->palette_index), 1000);
+		break;
+	case 1:
+		settings->video_output =
+			(enum dc_video_output)((settings->video_output + inc +
+						DC_VIDEO_OUTPUT_COUNT) %
+					       DC_VIDEO_OUTPUT_COUNT);
+		dc_toast_show(dc_video_output_name(settings->video_output), 1000);
+		break;
+	case 2:
+		settings->scale_mode =
+			(enum dc_scale_mode)((settings->scale_mode + inc + DC_SCALE_COUNT) %
+					     DC_SCALE_COUNT);
+		dc_toast_show(dc_video_scale_mode_name(settings->scale_mode), 1000);
+		break;
+	case 3:
+		settings->status_bar = !settings->status_bar;
+		dc_toast_show(settings->status_bar ? "Status bar on" :
+						       "Status bar off",
+			      1000);
+		break;
+	case 4:
+		settings->frameskip = !settings->frameskip;
+		dc_toast_show(settings->frameskip ? "Frameskip on" : "Frameskip off",
+			      1000);
+		break;
+	case 5:
+		settings->autosave_enabled = !settings->autosave_enabled;
+		if (!settings->autosave_enabled && *selected_row == 6)
+			*selected_row = 5;
+		dc_toast_show(settings->autosave_enabled ? "Autosave on" :
+							   "Autosave off",
+			      1000);
+		break;
+	case 6:
+		if (!settings->autosave_enabled)
+			break;
+		settings->autosave_interval_sec += inc * 10;
+		if (settings->autosave_interval_sec < DC_SETTINGS_AUTOSAVE_MIN_SEC)
+			settings->autosave_interval_sec = DC_SETTINGS_AUTOSAVE_MIN_SEC;
+		if (settings->autosave_interval_sec > DC_SETTINGS_AUTOSAVE_MAX_SEC)
+			settings->autosave_interval_sec = DC_SETTINGS_AUTOSAVE_MAX_SEC;
+		snprintf(toast_line, sizeof(toast_line), "Autosave: %d sec",
+			 settings->autosave_interval_sec);
+		dc_toast_show(toast_line, 1000);
+		break;
+	case 7:
+		if (settings->muted) {
+			settings->muted = false;
+			dc_toast_show("Audio unmuted", 1000);
+			break;
+		}
+		{
+			int vol = (int)settings->volume + inc * 10;
+
+			if (vol < DC_SETTINGS_VOLUME_MIN)
+				vol = DC_SETTINGS_VOLUME_MIN;
+			if (vol > DC_SETTINGS_VOLUME_MAX)
+				vol = DC_SETTINGS_VOLUME_MAX;
+			settings->volume = (uint8_t)vol;
+		}
+		snprintf(toast_line, sizeof(toast_line), "Volume: %u%%",
+			 settings->volume);
+		dc_toast_show(toast_line, 1000);
+		break;
+	case 8:
+		settings->menu_music = !settings->menu_music;
+		dc_toast_show(settings->menu_music ? "Menu music on" :
+						     "Menu music off",
+			      1000);
+		break;
+	default:
+		settings->audio_buffer =
+			(enum dc_audio_buffer_mode)((settings->audio_buffer + inc +
+						     DC_AUDIO_BUFFER_COUNT) %
+						    DC_AUDIO_BUFFER_COUNT);
+		dc_toast_show(dc_audio_buffer_name(settings->audio_buffer), 1000);
+		break;
+	}
+
+	if (settings_apply_cb)
+		settings_apply_cb(settings);
 }
 
 static uint32_t dc_settings_previous_buttons = 0xFFFF;
@@ -650,7 +964,7 @@ static void dc_settings_flush_input(void)
 static bool dc_settings_poll_input(struct dc_settings *settings, int *selected_row,
 				   bool *done)
 {
-	maple_device_t *controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	maple_device_t *controller = (maple_device_t *)dc_input_controller();
 	uint32_t previous_buttons = dc_settings_previous_buttons;
 	int t_up = dc_settings_t_up;
 	int t_down = dc_settings_t_down;
@@ -675,6 +989,8 @@ static bool dc_settings_poll_input(struct dc_settings *settings, int *selected_r
 		goto release;
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons))
+		arch_exit();
 	changed = buttons ^ previous_buttons;
 
 	vert = dc_input_axis((buttons & CONT_DPAD_UP) != 0,
@@ -699,99 +1015,25 @@ static bool dc_settings_poll_input(struct dc_settings *settings, int *selected_r
 		    horiz_edge :
 		    dc_input_repeat_axis(horiz, &t_horiz, &last_horiz);
 	if (axis_step != 0) {
-		const int inc = axis_step;
-		char toast_line[48];
-
-		switch (*selected_row) {
-		case 0:
-			settings->palette_index =
-				(uint8_t)((settings->palette_index + inc + DC_PALETTE_COUNT) %
-					  DC_PALETTE_COUNT);
-			dc_toast_show(dc_palette_name(settings->palette_index), 1000);
-			break;
-		case 1:
-			settings->video_output =
-				(enum dc_video_output)((settings->video_output + inc +
-							DC_VIDEO_OUTPUT_COUNT) %
-						       DC_VIDEO_OUTPUT_COUNT);
-			dc_toast_show(dc_video_output_name(settings->video_output), 1000);
-			break;
-		case 2:
-			settings->scale_mode =
-				(enum dc_scale_mode)((settings->scale_mode + inc + DC_SCALE_COUNT) %
-						     DC_SCALE_COUNT);
-			dc_toast_show(dc_video_scale_mode_name(settings->scale_mode), 1000);
-			break;
-		case 3:
-			settings->status_bar = !settings->status_bar;
-			dc_toast_show(settings->status_bar ? "Status bar on" :
-							       "Status bar off",
-				      1000);
-			break;
-		case 4:
-			settings->frameskip = !settings->frameskip;
-			dc_toast_show(settings->frameskip ? "Frameskip on" : "Frameskip off",
-				      1000);
-			break;
-		case 5:
-			settings->autosave_enabled = !settings->autosave_enabled;
-			if (!settings->autosave_enabled && *selected_row == 6)
-				*selected_row = 5;
-			dc_toast_show(settings->autosave_enabled ? "Autosave on" :
-								   "Autosave off",
-				      1000);
-			break;
-		case 6:
-			if (!settings->autosave_enabled)
-				break;
-			settings->autosave_interval_sec += inc * 10;
-			if (settings->autosave_interval_sec < DC_SETTINGS_AUTOSAVE_MIN_SEC)
-				settings->autosave_interval_sec = DC_SETTINGS_AUTOSAVE_MIN_SEC;
-			if (settings->autosave_interval_sec > DC_SETTINGS_AUTOSAVE_MAX_SEC)
-				settings->autosave_interval_sec = DC_SETTINGS_AUTOSAVE_MAX_SEC;
-			snprintf(toast_line, sizeof(toast_line), "Autosave: %d sec",
-				 settings->autosave_interval_sec);
-			dc_toast_show(toast_line, 1000);
-			break;
-		case 7:
-			if (settings->muted) {
-				settings->muted = false;
-				dc_toast_show("Audio unmuted", 1000);
-				break;
-			}
-			settings->volume = (uint8_t)((int)settings->volume + inc * 10);
-			if ((int)settings->volume < DC_SETTINGS_VOLUME_MIN)
-				settings->volume = DC_SETTINGS_VOLUME_MIN;
-			if ((int)settings->volume > DC_SETTINGS_VOLUME_MAX)
-				settings->volume = DC_SETTINGS_VOLUME_MAX;
-			snprintf(toast_line, sizeof(toast_line), "Volume: %u%%",
-				 settings->volume);
-			dc_toast_show(toast_line, 1000);
-			break;
-		default:
-			settings->audio_buffer =
-				(enum dc_audio_buffer_mode)((settings->audio_buffer + inc +
-							     DC_AUDIO_BUFFER_COUNT) %
-							    DC_AUDIO_BUFFER_COUNT);
-			dc_toast_show(dc_audio_buffer_name(settings->audio_buffer), 1000);
-			break;
-		}
+		dc_settings_nudge_row(settings, selected_row, axis_step);
 		changed_value = true;
-		if (settings_apply_cb)
-			settings_apply_cb(settings);
 	}
 
-	if ((buttons & CONT_A) && (changed & CONT_A) && *selected_row == 7) {
-		settings->muted = !settings->muted;
-		dc_toast_show(settings->muted ? "Audio muted" : "Audio unmuted", 1000);
+	if ((buttons & CONT_A) && (changed & CONT_A)) {
+		if (*selected_row == 7) {
+			settings->muted = !settings->muted;
+			dc_toast_show(settings->muted ? "Audio muted" : "Audio unmuted",
+				      1000);
+			if (settings_apply_cb)
+				settings_apply_cb(settings);
+		} else {
+			dc_settings_nudge_row(settings, selected_row, 1);
+		}
 		changed_value = true;
-		if (settings_apply_cb)
-			settings_apply_cb(settings);
 	}
 
 	if (((buttons & CONT_B) && (changed & CONT_B)) ||
-	    ((buttons & CONT_X) && (changed & CONT_X)) ||
-	    ((buttons & CONT_A) && (changed & CONT_A) && *selected_row != 7))
+	    ((buttons & CONT_X) && (changed & CONT_X)))
 		*done = true;
 
 	dc_settings_previous_buttons = buttons;

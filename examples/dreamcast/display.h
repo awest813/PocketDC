@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — display output (VGA / TV).
+ * PocketDC Dreamcast frontend — display output (VGA / TV).
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */

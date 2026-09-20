@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — simple 640x480 UI drawing.
+ * PocketDC Dreamcast frontend — simple 640x480 UI drawing.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -12,7 +12,7 @@
 #define DC_SCREEN_WIDTH  640
 #define DC_SCREEN_HEIGHT 480
 
-#define DC_UI_HEADER_HEIGHT 36
+#define DC_UI_HEADER_HEIGHT 48
 #define DC_UI_FOOTER_Y      452
 #define DC_UI_CONTENT_TOP   56
 #define DC_UI_MARGIN_X      12

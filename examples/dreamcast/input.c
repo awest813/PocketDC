@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — Maple controller input.
+ * PocketDC Dreamcast frontend — Maple controller input.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -12,9 +12,23 @@
 static maple_device_t *controller;
 static uint32_t previous_buttons;
 
+struct maple_device *dc_input_controller(void)
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		maple_device_t *dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
+
+		if (dev)
+			return (struct maple_device *)dev;
+	}
+
+	return NULL;
+}
+
 void dc_input_init(void)
 {
-	controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	controller = (maple_device_t *)dc_input_controller();
 	previous_buttons = 0xFFFF;
 }
 
@@ -91,6 +105,13 @@ int dc_input_axis_edge(int axis, int *last_axis)
 	return axis;
 }
 
+bool dc_input_quit_combo(uint32_t buttons)
+{
+	const uint32_t mask = CONT_A | CONT_B | CONT_X | CONT_Y | CONT_START;
+
+	return (buttons & mask) == mask;
+}
+
 static uint8_t dc_buttons_to_joypad(const cont_state_t *pad)
 {
 	const uint32_t buttons = pad->buttons;
@@ -137,14 +158,14 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	state->cycle_palette = false;
 	state->toggle_frameskip = false;
 	state->cycle_scale = false;
+	state->system_exit = false;
 
-	if (!controller)
-		controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
-
+	controller = (maple_device_t *)dc_input_controller();
 	if (!controller) {
 		gb->direct.joypad = 0xFF;
 		state->joypad = 0xFF;
 		state->fast_mode = 1;
+		previous_buttons = 0xFFFF;
 		return;
 	}
 
@@ -153,10 +174,18 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 		gb->direct.joypad = 0xFF;
 		state->joypad = 0xFF;
 		state->fast_mode = 1;
+		previous_buttons = 0xFFFF;
 		return;
 	}
 
 	buttons = pad->buttons;
+	if (dc_input_quit_combo(buttons)) {
+		state->system_exit = true;
+		gb->direct.joypad = 0xFF;
+		state->joypad = 0xFF;
+		state->fast_mode = 1;
+		return;
+	}
 	{
 		const uint32_t changed = buttons ^ previous_buttons;
 
@@ -187,6 +216,15 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	state->joypad = dc_buttons_to_joypad(pad);
 	gb->direct.joypad = state->joypad;
 
-	state->fast_mode = ((buttons & CONT_LTRIGGER) || (buttons & CONT_RTRIGGER)) ? 2 : 1;
+	/* Start+L cycles scale; L+R is 4x, either trigger is 2x. */
+	if (!(buttons & CONT_START) &&
+	    ((buttons & CONT_LTRIGGER) || (buttons & CONT_RTRIGGER))) {
+		if ((buttons & CONT_LTRIGGER) && (buttons & CONT_RTRIGGER))
+			state->fast_mode = 4;
+		else
+			state->fast_mode = 2;
+	} else {
+		state->fast_mode = 1;
+	}
 	previous_buttons = buttons;
 }

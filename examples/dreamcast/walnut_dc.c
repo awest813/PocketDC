@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend.
+ * PocketDC Dreamcast frontend.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -60,6 +60,7 @@ static void dc_apply_av_settings(void)
 #if ENABLE_SOUND
 	dc_audio_configure(app_settings.volume, app_settings.muted,
 			   app_settings.audio_buffer);
+	dc_audio_set_menu_music(app_settings.menu_music);
 #endif
 }
 
@@ -77,10 +78,26 @@ static void dc_apply_settings_to_game(struct gb_s *gb, struct dc_priv *p)
 	dc_apply_av_settings();
 }
 
-static void dc_build_status_bar_text(const char *rom_title, char *line, size_t len)
+static void dc_build_status_bar_text(const char *rom_title, char *line, size_t len,
+				     unsigned int fast_mode)
 {
 	if (!line || len == 0)
 		return;
+
+	if (fast_mode > 1) {
+		if (app_settings.muted) {
+			snprintf(line, len, "%s | %s | Mute | %ux",
+				 rom_title ? rom_title : "Game",
+				 dc_video_scale_mode_name(app_settings.scale_mode),
+				 fast_mode);
+			return;
+		}
+		snprintf(line, len, "%s | %s | Vol %u%% | %ux",
+			 rom_title ? rom_title : "Game",
+			 dc_video_scale_mode_name(app_settings.scale_mode),
+			 app_settings.volume, fast_mode);
+		return;
+	}
 
 	if (app_settings.muted) {
 		snprintf(line, len, "%s | %s | Mute",
@@ -253,6 +270,14 @@ void gb_error(struct gb_s *gb, const enum gb_error_e gb_err, const uint16_t addr
 		if (p->save_path[0] != '\0')
 			dc_cart_ram_write_file(p->save_path, p->cart_ram, p->save_size);
 	}
+	if (gb->mbc == 3 && p->save_path[0] != '\0') {
+		char rtc_path[256];
+		time_t now = time(NULL);
+
+		if (dc_rtc_path_from_save(p->save_path, rtc_path, sizeof(rtc_path)) == 0)
+			dc_rtc_write_file(rtc_path, gb->rtc_real.bytes,
+					  gb->rtc_latched.bytes, (uint32_t)now);
+	}
 
 	printf("pocketdc: emulator error %s\n",
 	       (unsigned int)gb_err < GB_INVALID_MAX ? gb_err_str[gb_err] :
@@ -262,40 +287,172 @@ void gb_error(struct gb_s *gb, const enum gb_error_e gb_err, const uint16_t addr
 
 static int dc_load_bootrom(struct dc_priv *p)
 {
+	static const char *const paths[] = {
+		"dmg_boot.bin",
+		"/cd/dmg_boot.bin",
+		"/sd/dmg_boot.bin",
+		"/ide/dmg_boot.bin",
+		"/pc/dmg_boot.bin",
+		"/cd/roms/dmg_boot.bin",
+		"/sd/roms/dmg_boot.bin",
+		"/ide/roms/dmg_boot.bin",
+		"/pc/roms/dmg_boot.bin",
+		NULL
+	};
 	FILE *f;
 	long size;
+	unsigned int i;
+	char beside[256];
 
-	f = fopen("dmg_boot.bin", "rb");
-	if (!f)
-		return -1;
+	beside[0] = '\0';
+	if (p->rom_path[0] != '\0') {
+		const char *slash = strrchr(p->rom_path, '/');
 
-	if (fseek(f, 0, SEEK_END) != 0) {
-		fclose(f);
-		return -1;
+		if (slash && slash != p->rom_path)
+			snprintf(beside, sizeof(beside), "%.*s/dmg_boot.bin",
+				 (int)(slash - p->rom_path), p->rom_path);
 	}
 
-	size = ftell(f);
-	if (size != (long)DC_DMG_BOOTROM_SIZE) {
+	for (i = 0; ; i++) {
+		const char *path;
+
+		if (beside[0] != '\0') {
+			path = beside;
+			beside[0] = '\0';
+			i--;
+		} else if (paths[i] != NULL) {
+			path = paths[i];
+		} else {
+			break;
+		}
+
+		f = fopen(path, "rb");
+		if (!f)
+			continue;
+
+		if (fseek(f, 0, SEEK_END) != 0) {
+			fclose(f);
+			continue;
+		}
+
+		size = ftell(f);
+		if (size != (long)DC_DMG_BOOTROM_SIZE) {
+			fclose(f);
+			continue;
+		}
+
+		rewind(f);
+		p->bootrom = (uint8_t *)malloc((size_t)size);
+		if (!p->bootrom) {
+			fclose(f);
+			return -1;
+		}
+
+		if (fread(p->bootrom, 1, (size_t)size, f) != (size_t)size) {
+			free(p->bootrom);
+			p->bootrom = NULL;
+			fclose(f);
+			continue;
+		}
+
 		fclose(f);
-		return -1;
+		return 0;
 	}
 
-	rewind(f);
-	p->bootrom = (uint8_t *)malloc((size_t)size);
-	if (!p->bootrom) {
-		fclose(f);
-		return -1;
+	return -1;
+}
+
+#define DC_RTC_CATCHUP_MAX_SEC (7u * 24u * 60u * 60u)
+
+static void dc_rtc_add_seconds(struct gb_s *gb, unsigned long seconds)
+{
+	if (gb->mbc != 3 || (gb->rtc_real.reg.high & 0x40) != 0)
+		return;
+
+	while (seconds--) {
+		if (gb->rtc_real.reg.sec == 63) {
+			gb->rtc_real.reg.sec = 0;
+			continue;
+		}
+
+		if (++gb->rtc_real.reg.sec != 60)
+			continue;
+
+		gb->rtc_real.reg.sec = 0;
+		if (gb->rtc_real.reg.min == 63) {
+			gb->rtc_real.reg.min = 0;
+			continue;
+		}
+		if (++gb->rtc_real.reg.min != 60)
+			continue;
+
+		gb->rtc_real.reg.min = 0;
+		if (gb->rtc_real.reg.hour == 31) {
+			gb->rtc_real.reg.hour = 0;
+			continue;
+		}
+		if (++gb->rtc_real.reg.hour != 24)
+			continue;
+
+		gb->rtc_real.reg.hour = 0;
+		if (++gb->rtc_real.reg.yday != 0)
+			continue;
+
+		if (gb->rtc_real.reg.high & 1)
+			gb->rtc_real.reg.high |= 0x80;
+
+		gb->rtc_real.reg.high ^= 1;
+	}
+}
+
+static void dc_load_rtc(struct gb_s *gb, const struct dc_priv *p)
+{
+	char rtc_path[256];
+	uint8_t real[5];
+	uint8_t latched[5];
+	uint32_t saved_sec = 0;
+	time_t rawtime;
+	struct tm timeinfo;
+
+	if (gb->mbc != 3)
+		return;
+
+	if (p->save_path[0] != '\0' &&
+	    dc_rtc_path_from_save(p->save_path, rtc_path, sizeof(rtc_path)) == 0 &&
+	    dc_rtc_read_file(rtc_path, real, latched, &saved_sec) == 0) {
+		unsigned long delta;
+		time_t now;
+
+		memcpy(gb->rtc_real.bytes, real, sizeof(real));
+		memcpy(gb->rtc_latched.bytes, latched, sizeof(latched));
+		now = time(NULL);
+		if (now > (time_t)saved_sec) {
+			delta = (unsigned long)(now - (time_t)saved_sec);
+			if (delta > DC_RTC_CATCHUP_MAX_SEC)
+				delta = DC_RTC_CATCHUP_MAX_SEC;
+			dc_rtc_add_seconds(gb, delta);
+		}
+		return;
 	}
 
-	if (fread(p->bootrom, 1, (size_t)size, f) != (size_t)size) {
-		free(p->bootrom);
-		p->bootrom = NULL;
-		fclose(f);
-		return -1;
-	}
+	time(&rawtime);
+	localtime_r(&rawtime, &timeinfo);
+	gb_set_rtc(gb, &timeinfo);
+}
 
-	fclose(f);
-	return 0;
+static bool dc_write_rtc(struct gb_s *gb, const struct dc_priv *p)
+{
+	char rtc_path[256];
+	time_t now;
+
+	if (!gb || gb->mbc != 3 || !p || p->save_path[0] == '\0')
+		return true;
+	if (dc_rtc_path_from_save(p->save_path, rtc_path, sizeof(rtc_path)) != 0)
+		return false;
+
+	now = time(NULL);
+	return dc_rtc_write_file(rtc_path, gb->rtc_real.bytes, gb->rtc_latched.bytes,
+				 (uint32_t)now) == 0;
 }
 
 static int dc_init_emulator(struct gb_s *gb, struct dc_priv *p)
@@ -323,14 +480,7 @@ static int dc_init_emulator(struct gb_s *gb, struct dc_priv *p)
 		return DC_INIT_ERR_SAVE_ALLOC;
 	}
 
-	{
-		time_t rawtime;
-		struct tm timeinfo;
-
-		time(&rawtime);
-		localtime_r(&rawtime, &timeinfo);
-		gb_set_rtc(gb, &timeinfo);
-	}
+	dc_load_rtc(gb, p);
 
 	gb_init_lcd(gb, &lcd_draw_line);
 	dc_auto_assign_palette(p, gb_colour_hash(gb));
@@ -338,12 +488,101 @@ static int dc_init_emulator(struct gb_s *gb, struct dc_priv *p)
 	return 0;
 }
 
-static bool dc_write_save(struct dc_priv *p)
+static bool dc_write_save(struct gb_s *gb, struct dc_priv *p)
 {
-	if (p->save_size == 0 || !p->cart_ram || p->save_path[0] == '\0')
-		return true;
+	bool ok = true;
 
-	return dc_cart_ram_write_file(p->save_path, p->cart_ram, p->save_size) == 0;
+	if (p->save_size > 0 && p->cart_ram && p->save_path[0] != '\0') {
+		if (dc_cart_ram_write_file(p->save_path, p->cart_ram, p->save_size) != 0)
+			ok = false;
+	}
+
+	if (!dc_write_rtc(gb, p))
+		ok = false;
+
+	return ok;
+}
+
+static int dc_state_path(const struct dc_priv *p, char *path, size_t path_len)
+{
+	if (p->save_path[0] != '\0')
+		return dc_state_path_from_save(p->save_path, path, path_len);
+	if (p->rom_path[0] != '\0')
+		return dc_state_path_from_save(p->rom_path, path, path_len);
+	return -1;
+}
+
+static bool dc_write_state(struct gb_s *gb, struct dc_priv *p)
+{
+	char path[256];
+	size_t size;
+	uint8_t *buf;
+	int rc;
+
+	if (dc_state_path(p, path, sizeof(path)) != 0)
+		return false;
+
+	size = gb_serialize_size(gb);
+	if (size == 0)
+		return false;
+
+	buf = (uint8_t *)malloc(size);
+	if (!buf)
+		return false;
+
+	if (gb_serialize(gb, buf, size) != GB_SERIALIZE_OK) {
+		free(buf);
+		return false;
+	}
+
+	rc = dc_cart_ram_write_file(path, buf, size);
+	free(buf);
+	return rc == 0;
+}
+
+static int dc_load_state(struct gb_s *gb, struct dc_priv *p)
+{
+	char path[256];
+	FILE *f;
+	long size;
+	uint8_t *buf;
+	int rc;
+
+	if (dc_state_path(p, path, sizeof(path)) != 0)
+		return GB_SERIALIZE_ERROR_ARG;
+
+	f = fopen(path, "rb");
+	if (!f)
+		return GB_SERIALIZE_ERROR_BUFFER;
+
+	if (fseek(f, 0, SEEK_END) != 0) {
+		fclose(f);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	size = ftell(f);
+	if (size <= 0 || size > (512 * 1024)) {
+		fclose(f);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	rewind(f);
+	buf = (uint8_t *)malloc((size_t)size);
+	if (!buf) {
+		fclose(f);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	if (fread(buf, 1, (size_t)size, f) != (size_t)size) {
+		fclose(f);
+		free(buf);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	fclose(f);
+	rc = gb_deserialize(gb, buf, (size_t)size);
+	free(buf);
+	return rc;
 }
 
 /*
@@ -353,9 +592,6 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 {
 	char rom_title[17];
 	enum dc_pause_menu_action action;
-	const bool can_save = priv.save_size > 0 && priv.cart_ram != NULL;
-	const bool can_load = can_save &&
-			      dc_save_file_exists(priv.save_path);
 
 	gb_get_rom_name(gb, rom_title);
 	rom_title[sizeof(rom_title) - 1] = '\0';
@@ -363,13 +599,26 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 	dc_input_flush_edges();
 
 	while (1) {
-		action = dc_pause_menu_run(rom_title, can_save, can_load);
+		const bool can_save = priv.save_size > 0 && priv.cart_ram != NULL;
+		const bool can_load = can_save &&
+				      dc_save_file_exists(priv.save_path);
+		char state_path[256];
+		const bool can_save_state = dc_state_path(&priv, state_path,
+							 sizeof(state_path)) == 0;
+		const bool can_load_state = can_save_state &&
+					    dc_save_file_exists(state_path);
+
+		action = dc_pause_menu_run(rom_title, can_save, can_load,
+					   can_save_state, can_load_state,
+					   menu_mode);
 
 		switch (action) {
 		case DC_PAUSE_MENU_RESUME:
 			return 1;
+		case DC_PAUSE_MENU_NONE:
+			break;
 		case DC_PAUSE_MENU_SAVE:
-			if (dc_write_save(&priv))
+			if (dc_write_save(gb, &priv))
 				dc_menu_show_message("Save Game", "Game saved.", 1200);
 			else
 				dc_menu_show_message("Save Game",
@@ -390,14 +639,54 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 				}
 			}
 			break;
+		case DC_PAUSE_MENU_ERASE:
+			if (priv.cart_ram && priv.save_size > 0)
+				memset(priv.cart_ram, 0, priv.save_size);
+			if (priv.save_path[0] != '\0') {
+				char rtc_path[256];
+
+				remove(priv.save_path);
+				if (dc_rtc_path_from_save(priv.save_path, rtc_path,
+							  sizeof(rtc_path)) == 0)
+					remove(rtc_path);
+			}
+			gb_reset(gb);
+			dc_menu_show_message("Erase Save", "Save data erased.", 1200);
+			break;
+		case DC_PAUSE_MENU_SAVE_STATE:
+			if (dc_write_state(gb, &priv))
+				dc_menu_show_message("Save State", "State saved.", 1200);
+			else
+				dc_menu_show_message("Save State",
+						     "Unable to write state file.",
+						     1500);
+			break;
+		case DC_PAUSE_MENU_LOAD_STATE: {
+			const int st = dc_load_state(gb, &priv);
+
+			if (st == GB_SERIALIZE_OK)
+				dc_menu_show_message("Load State",
+						     "State loaded.", 1200);
+			else if (st == GB_SERIALIZE_ERROR_ROM)
+				dc_menu_show_message("Load State",
+						     "State is for a different ROM.",
+						     1500);
+			else
+				dc_menu_show_message("Load State",
+						     "Unable to load state file.",
+						     1500);
+			break;
+		}
 		case DC_PAUSE_MENU_SETTINGS:
 			dc_settings_menu_run(&app_settings);
 			dc_apply_settings_to_game(gb, &priv);
 			break;
 		case DC_PAUSE_MENU_MAIN_MENU:
+			dc_write_save(gb, &priv);
+			return 0;
 		case DC_PAUSE_MENU_EXIT:
-			dc_write_save(&priv);
-			return menu_mode ? 0 : -1;
+			dc_write_save(gb, &priv);
+			return -1;
 		default:
 			return 1;
 		}
@@ -427,18 +716,28 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 	bool running = true;
 	bool paused = false;
 	bool return_to_main_menu = false;
+	bool exit_app = false;
 	char rom_title[17];
 
 	memset(&priv, 0, sizeof(priv));
+#if ENABLE_SOUND
+	dc_audio_enter_game();
+#endif
 	if (dc_rom_load(&priv, rom_path) != 0) {
 		dc_menu_show_message("Load Failed",
 				     "Unable to open or validate ROM file.",
 				     1500);
+#if ENABLE_SOUND
+		if (menu_mode)
+			dc_audio_enter_menu();
+#endif
 		return menu_mode;
 	}
 
-	if (save_path && save_path[0] != '\0')
+	if (save_path && save_path[0] != '\0') {
 		strncpy(priv.save_path, save_path, sizeof(priv.save_path) - 1);
+		priv.save_path[sizeof(priv.save_path) - 1] = '\0';
+	}
 
 	{
 		const int init_err = dc_init_emulator(&gb, &priv);
@@ -455,6 +754,10 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 
 			dc_menu_show_message("Load Failed", message, 1500);
 			dc_rom_unload(&priv);
+#if ENABLE_SOUND
+			if (menu_mode)
+				dc_audio_enter_menu();
+#endif
 			return menu_mode;
 		}
 	}
@@ -475,6 +778,10 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 
 		if (input.reset_game)
 			gb_reset(&gb);
+		if (input.system_exit) {
+			dc_write_save(gb, &priv);
+			arch_exit();
+		}
 		if (input.cycle_palette) {
 			palette_selection = (palette_selection + 1) % DC_PALETTE_COUNT;
 			dc_manual_assign_palette(&priv, (uint8_t)palette_selection);
@@ -513,6 +820,7 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 			const int pause_result = dc_handle_pause_menu(&gb, menu_mode);
 
 			if (pause_result < 0) {
+				exit_app = true;
 				running = false;
 				break;
 			}
@@ -545,21 +853,21 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 		}
 
 		fast_mode_timer = fast_mode;
-		dc_video_present(&priv);
-		if (app_settings.status_bar || dc_toast_active()) {
+		{
 			char status_line[64];
 			const char *status = NULL;
 
 			if (app_settings.status_bar) {
 				dc_build_status_bar_text(rom_title, status_line,
-							 sizeof(status_line));
+							 sizeof(status_line),
+							 fast_mode);
 				status = status_line;
 			}
-			dc_video_present_overlays(status);
+			dc_video_present(&priv, status);
 		}
 
 		if (save_timer > 0 && priv.save_size > 0 && --save_timer <= 0) {
-			if (dc_write_save(&priv))
+			if (dc_write_save(gb, &priv))
 				dc_toast_show("Autosaved", 1200);
 			else
 				dc_toast_show("Autosave failed", 1500);
@@ -574,8 +882,15 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 		}
 	}
 
-	dc_write_save(&priv);
+	dc_write_save(gb, &priv);
 	dc_rom_unload(&priv);
+#if ENABLE_SOUND
+	if (menu_mode)
+		dc_audio_enter_menu();
+#endif
+
+	if (exit_app)
+		return false;
 
 	if (return_to_main_menu)
 		return true;
@@ -622,7 +937,7 @@ int main(int argc, char **argv)
 	if (show_migration_toast)
 		dc_toast_show("Config upgraded to pocketdc.cfg", 2500);
 	if (audio_init_failed)
-		dc_toast_show("Audio init failed — no sound", 3000);
+		dc_toast_show("Audio init failed - no sound", 3000);
 
 	if (argc >= 2) {
 		const char *save_path = (argc >= 3) ? argv[2] : NULL;
@@ -630,6 +945,9 @@ int main(int argc, char **argv)
 		if (!dc_run_game(argv[1], save_path, false))
 			goto shutdown;
 	} else {
+#if ENABLE_SOUND
+		dc_audio_enter_menu();
+#endif
 		while (1) {
 			enum dc_main_menu_action action;
 
@@ -651,6 +969,7 @@ int main(int argc, char **argv)
 
 				if (!dc_run_game(selected_rom, NULL, true))
 					goto shutdown;
+				dc_toast_show("Returned to menu", 1400);
 				continue;
 			}
 
@@ -666,8 +985,14 @@ int main(int argc, char **argv)
 				continue;
 			}
 
+			if (action == DC_MAIN_MENU_ABOUT) {
+				dc_about_menu_run();
+				continue;
+			}
+
 			while (action == DC_MAIN_MENU_ROM_LIBRARY) {
-				if (!dc_browser_run(&browser, selected_rom,
+				dc_browser_apply_persisted(&browser, &app_settings);
+				if (!dc_browser_run(&browser, &app_settings, selected_rom,
 						    sizeof(selected_rom))) {
 					dc_browser_export_persisted(&browser,
 								    &app_settings);
@@ -681,6 +1006,7 @@ int main(int argc, char **argv)
 
 				if (!dc_run_game(selected_rom, NULL, true))
 					goto shutdown;
+				dc_toast_show("Returned to menu", 1400);
 			}
 		}
 	}

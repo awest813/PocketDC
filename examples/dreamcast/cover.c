@@ -1,5 +1,5 @@
 /*
- * Walnut-CGB Dreamcast frontend — ROM cover art.
+ * PocketDC Dreamcast frontend — ROM cover art.
  * Copyright (c) 2025 Mr. Paul (https://github.com/Mr-PauI)
  * Licensed under the MIT License.
  */
@@ -10,6 +10,7 @@
 #include "cover.h"
 #include "font8x8.h"
 #include "ui.h"
+#include "../../extras/zip_rom/zip_rom.h"
 
 #define DC_COVER_MAGIC 0x35353557U /* "W555" little-endian */
 
@@ -66,7 +67,7 @@ static uint16_t dc_cover_hsv_to_rgb555(int hue)
 }
 
 bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
-			bool *is_cgb, uint8_t *cart_type)
+			bool *is_cgb, uint8_t *cart_type, uint8_t *rom_size_code)
 {
 	FILE *file;
 	uint8_t header[0x150];
@@ -75,30 +76,40 @@ bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
 	if (!rom_path || !title || title_len == 0)
 		return false;
 
-	file = fopen(rom_path, "rb");
-	if (!file)
-		return false;
+	if (zip_rom_path_is_zip(rom_path)) {
+		size_t got = 0;
 
-	if (fread(header, 1, sizeof(header), file) != sizeof(header)) {
+		if (zip_rom_read(rom_path, header, sizeof(header), &got) != 0 ||
+		    got < sizeof(header))
+			return false;
+	} else {
+		file = fopen(rom_path, "rb");
+		if (!file)
+			return false;
+
+		if (fread(header, 1, sizeof(header), file) != sizeof(header)) {
+			fclose(file);
+			return false;
+		}
+
 		fclose(file);
-		return false;
 	}
-
-	fclose(file);
 
 	title[0] = '\0';
 	for (i = 0; i < 16 && title_len > i + 1; i++) {
 		const uint8_t ch = header[0x134 + i];
 
-		if (ch < ' ' || ch > '_')
+		if (ch < ' ' || ch > '~')
 			break;
 
 		title[i] = (char)ch;
 		title[i + 1] = '\0';
 	}
 
-	if (title[0] == '\0')
+	if (title[0] == '\0') {
 		strncpy(title, "Unknown", title_len);
+		title[title_len - 1] = '\0';
+	}
 
 	if (is_cgb)
 		*is_cgb = (header[0x143] & 0x80) != 0;
@@ -106,7 +117,70 @@ bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
 	if (cart_type)
 		*cart_type = header[0x147];
 
+	if (rom_size_code)
+		*rom_size_code = header[0x148];
+
 	return true;
+}
+
+void dc_rom_format_cart_info(uint8_t cart_type, uint8_t rom_size_code,
+			     char *cart_out, size_t cart_len,
+			     char *size_out, size_t size_len)
+{
+	const char *cart;
+
+	if (size_out && size_len > 0) {
+		if (rom_size_code <= 8)
+			snprintf(size_out, size_len, "%dK", 32 << rom_size_code);
+		else
+			snprintf(size_out, size_len, "?KB");
+	}
+
+	if (!cart_out || cart_len == 0)
+		return;
+
+	switch (cart_type) {
+	case 0x00:
+		cart = "ROM";
+		break;
+	case 0x01:
+		cart = "MBC1";
+		break;
+	case 0x02:
+		cart = "MBC1+RAM";
+		break;
+	case 0x03:
+		cart = "MBC1+BAT";
+		break;
+	case 0x05:
+	case 0x06:
+		cart = "MBC2";
+		break;
+	case 0x0F:
+	case 0x10:
+		cart = "MBC3+RTC";
+		break;
+	case 0x11:
+	case 0x12:
+	case 0x13:
+		cart = "MBC3";
+		break;
+	case 0x19:
+	case 0x1A:
+	case 0x1B:
+		cart = "MBC5";
+		break;
+	case 0x1C:
+	case 0x1D:
+	case 0x1E:
+		cart = "MBC5+RUM";
+		break;
+	default:
+		snprintf(cart_out, cart_len, "CART %02X", cart_type);
+		return;
+	}
+
+	snprintf(cart_out, cart_len, "%s", cart);
 }
 
 static void dc_cover_rom_stem(const char *rom_path, char *stem, size_t stem_len)

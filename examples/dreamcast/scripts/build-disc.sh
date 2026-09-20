@@ -46,8 +46,14 @@ make
 # the raw ELF will not boot. Strip to a flat binary, then scramble it.
 mkdir -p "${ROM_DIR}" "${COVERS_DIR}"
 
-if [[ -d "${ROM_DIR}" ]] && compgen -G "${ROM_DIR}/*.gb" >/dev/null ||
-	compgen -G "${ROM_DIR}/*.gbc" >/dev/null; then
+if [[ -d "${ROM_DIR}" ]] && {
+	compgen -G "${ROM_DIR}/*.gb" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.GB" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.gbc" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.GBC" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.zip" >/dev/null ||
+	compgen -G "${ROM_DIR}/*.ZIP" >/dev/null
+}; then
 	if python3 -c "import PIL" 2>/dev/null; then
 		echo "Fetching missing cover art for ROMs in ${ROM_DIR}..."
 		python3 "${FETCH_COVERS}" --roms-dir "${ROM_DIR}" || true
@@ -87,5 +93,29 @@ if command -v cdi4dc >/dev/null 2>&1; then
 	echo "Created ${BUILD_DIR}/walnut-dc.cdi"
 fi
 
-echo "Place .gb/.gbc ROM files in ${ROM_DIR} before burning."
+CDDA_DIR="${ROOT_DIR}/meta/cdda"
+mapfile -t CDDA_TRACKS < <(find "${CDDA_DIR}" -maxdepth 1 -type f \( -iname '*.wav' -o -iname '*.raw' \) | sort)
+if [[ ${#CDDA_TRACKS[@]} -gt 0 ]]; then
+	if command -v mkdcdisc >/dev/null 2>&1; then
+		CDDA_STAGE="${BUILD_DIR}/cdda-data"
+		rm -rf "${CDDA_STAGE}"
+		mkdir -p "${CDDA_STAGE}"
+		cp -a "${ISO_DIR}/." "${CDDA_STAGE}/"
+		rm -f "${CDDA_STAGE}/1ST_READ.BIN"
+		MKDC_ARGS=(-e "${ROOT_DIR}/walnut-dc.elf" -D "${CDDA_STAGE}"
+			-n POCKETDC -p "${BUILD_DIR}/IP.BIN"
+			-o "${BUILD_DIR}/walnut-dc.cdi")
+		for track in "${CDDA_TRACKS[@]}"; do
+			MKDC_ARGS+=(-c "${track}")
+		done
+		mkdcdisc "${MKDC_ARGS[@]}"
+		echo "Created ${BUILD_DIR}/walnut-dc.cdi with ${#CDDA_TRACKS[@]} CDDA track(s)"
+	else
+		echo "note: ${#CDDA_TRACKS[@]} file(s) in meta/cdda/ but mkdcdisc is not on PATH;"
+		echo "      data-only ISO/CDI has no menu music. See meta/cdda/README.md."
+	fi
+fi
+
+echo "Place .gb/.gbc/.zip ROM files in ${ROM_DIR} before burning."
 echo "Optional cover art (.w555) goes in ${COVERS_DIR} — see covers/README.md."
+echo "Optional menu CDDA: 44.1 kHz stereo WAV in meta/cdda/ — see meta/cdda/README.md."

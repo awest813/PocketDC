@@ -63,7 +63,7 @@ static void dc_menu_flush_input(void)
 
 static void dc_menu_poll_input(struct dc_menu_input *input)
 {
-	maple_device_t *controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	maple_device_t *controller = (maple_device_t *)dc_input_controller();
 	uint32_t previous_buttons = dc_menu_previous_buttons;
 	int t_up = dc_menu_t_up;
 	int t_down = dc_menu_t_down;
@@ -386,11 +386,12 @@ enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save
 {
 	char subtitle[80];
 	char paused_line[80];
-	const char *items[6];
+	const char *items[8];
 	struct dc_menu_list menu;
 	int choice;
 	int save_idx = -1;
 	int load_idx = -1;
+	int erase_idx = -1;
 	int settings_idx;
 	int main_menu_idx = -1;
 	int exit_idx;
@@ -410,6 +411,8 @@ enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save
 	if (can_load) {
 		load_idx = i;
 		items[i++] = "Load Game";
+		erase_idx = i;
+		items[i++] = "Erase Save";
 	}
 	settings_idx = i;
 	items[i++] = "Settings";
@@ -436,6 +439,11 @@ enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save
 		return DC_PAUSE_MENU_SAVE;
 	if (choice == load_idx)
 		return DC_PAUSE_MENU_LOAD;
+	if (choice == erase_idx) {
+		if (!dc_menu_confirm("Erase Save", "Delete SRAM and clock data?"))
+			return DC_PAUSE_MENU_NONE;
+		return DC_PAUSE_MENU_ERASE;
+	}
 	if (choice == settings_idx)
 		return DC_PAUSE_MENU_SETTINGS;
 	if (choice == main_menu_idx)
@@ -521,11 +529,12 @@ void dc_controls_menu_run(void)
 		"Start+X = Toggle frameskip",
 		"Start+L = Cycle scale mode",
 		"Y = Cycle palette",
-		"L/R trigger = Fast-forward (2x)",
+		"L/R trigger = Fast-forward (2x, both = 4x)",
 		"",
 		"Pause Menu",
 		"Save Game = write .sav alongside ROM",
 		"Load Game = reload .sav and reset",
+		"Erase Save = delete .sav/.rtc (confirm)",
 		"Main Menu = leave game (menu launch)",
 		"Exit PocketDC = quit the emulator",
 		"Autosave interval in Settings (default 60s)",
@@ -619,6 +628,7 @@ void dc_about_menu_run(void)
 		"B in menus = back",
 		"Start+Y in library = favorite",
 		"Disc CDDA plays in menus when present",
+		"MBC3 clock stored as .rtc beside .sav",
 		"",
 		"MIT License. Do not distribute ROMs."
 	};
@@ -936,7 +946,7 @@ static void dc_settings_flush_input(void)
 static bool dc_settings_poll_input(struct dc_settings *settings, int *selected_row,
 				   bool *done)
 {
-	maple_device_t *controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	maple_device_t *controller = (maple_device_t *)dc_input_controller();
 	uint32_t previous_buttons = dc_settings_previous_buttons;
 	int t_up = dc_settings_t_up;
 	int t_down = dc_settings_t_down;

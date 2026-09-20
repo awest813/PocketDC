@@ -95,13 +95,13 @@ Load `walnut-dc.elf` with a ROM path argument if your loader supports argv, or u
 
 | Extra | Action |
 |-------|--------|
-| Start + Y | Pause menu (save/load; Main Menu when launched from the menu) |
+| Start + Y | Pause menu (save/load/erase; Main Menu when launched from the menu) |
 | Start + A | Reset game |
 | Start + B | Return to main menu (menu mode) or exit (direct load) |
 | Y | Cycle palette |
 | Start + X | Toggle frameskip |
 | Start + L | Cycle scale mode |
-| L / R trigger | Fast-forward (2×) |
+| L / R trigger | Fast-forward (2×; both together = 4×; ignored while Start is held) |
 
 ## Settings
 
@@ -138,9 +138,11 @@ Accessible from the main menu or pause menu. Video and audio changes apply immed
 
 Disc metadata is defined in `meta/ip.txt` (processed by KOS `makeip`).
 
+Battery saves write `name.sav` next to the ROM (including zipped ROMs). MBC3 clocks (Pokémon Gold/Silver and similar) also write `name.rtc` and catch up from wall time on load (up to 7 days).
+
 ## Optional Files
 
-- `dmg_boot.bin` — DMG boot ROM in the working directory (optional)
+- `dmg_boot.bin` — DMG boot ROM (256 bytes). Searched beside the game, then `dmg_boot.bin`, `/cd`, `/sd`, `/ide`, `/pc`, and those `roms/` folders.
 
 ## Status
 
@@ -152,7 +154,8 @@ Phase 3 (ROM browser + disc packaging) is implemented. Phase 4 hardware validati
 
 - **Controls** screen in the main menu
 - **Toast messages** for palette changes, frameskip, fast-forward, and autosave
-- **Save/load confirmations** in the pause menu
+- **Save/load/erase** confirmations in the pause menu
+- **MBC3 RTC** persistence (`.rtc` sidecar)
 - **Loading screen** when starting a ROM from the browser
 - **Save indicators** in the ROM library
 - **Scale modes** including widescreen (640×432) and full-screen stretch

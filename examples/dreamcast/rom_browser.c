@@ -5,6 +5,7 @@
  */
 
 #include <dirent.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -841,7 +842,7 @@ static void dc_browser_flush_input(void)
 static void dc_browser_poll_input(struct dc_browser *browser,
 				  struct dc_browser_input *input)
 {
-	maple_device_t *controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	maple_device_t *controller = (maple_device_t *)dc_input_controller();
 	uint32_t previous_buttons = dc_browser_previous_buttons;
 	int t_up = dc_browser_t_up;
 	int t_down = dc_browser_t_down;
@@ -1253,26 +1254,39 @@ bool dc_browser_run(struct dc_browser *browser, struct dc_settings *settings,
 	}
 }
 
-int dc_save_path_from_rom(const char *rom_path, char *save_path, size_t save_path_len)
+static int dc_path_replace_ext(const char *path, const char *ext, char *out,
+			       size_t out_len)
 {
 	const char *dot;
 	size_t base_len;
+	size_t ext_len;
 
-	if (!rom_path || !save_path || save_path_len == 0)
+	if (!path || !ext || !out || out_len == 0)
 		return -1;
 
-	dot = strrchr(rom_path, '.');
-	if (!dot || dot == rom_path)
-		base_len = strlen(rom_path);
+	ext_len = strlen(ext);
+	dot = strrchr(path, '.');
+	if (!dot || dot == path)
+		base_len = strlen(path);
 	else
-		base_len = (size_t)(dot - rom_path);
+		base_len = (size_t)(dot - path);
 
-	if (base_len + 4 + 1 > save_path_len)
+	if (base_len + ext_len + 1 > out_len)
 		return -1;
 
-	memcpy(save_path, rom_path, base_len);
-	memcpy(save_path + base_len, ".sav", 5);
+	memcpy(out, path, base_len);
+	memcpy(out + base_len, ext, ext_len + 1);
 	return 0;
+}
+
+int dc_save_path_from_rom(const char *rom_path, char *save_path, size_t save_path_len)
+{
+	return dc_path_replace_ext(rom_path, ".sav", save_path, save_path_len);
+}
+
+int dc_rtc_path_from_save(const char *save_path, char *rtc_path, size_t rtc_path_len)
+{
+	return dc_path_replace_ext(save_path, ".rtc", rtc_path, rtc_path_len);
 }
 
 int dc_rom_load(struct dc_priv *priv, const char *rom_path)
@@ -1462,6 +1476,72 @@ int dc_cart_ram_write_file(const char *save_path, const uint8_t *data, size_t le
 	remove(save_path);
 	if (rename(tmp_path, save_path) != 0) {
 		printf("pocketdc: unable to finalize save '%s'\n", save_path);
+		remove(tmp_path);
+		return -1;
+	}
+
+	return 0;
+}
+
+#define DC_RTC_MAGIC 0x31434450u /* "PDC1" little-endian */
+
+int dc_rtc_read_file(const char *rtc_path, uint8_t real[5], uint8_t latched[5],
+		     uint32_t *unix_sec)
+{
+	FILE *f;
+	uint32_t magic = 0;
+	uint32_t stamp = 0;
+
+	if (!rtc_path || !real || !latched)
+		return -1;
+
+	f = fopen(rtc_path, "rb");
+	if (!f)
+		return -1;
+
+	if (fread(&magic, 1, sizeof(magic), f) != sizeof(magic) ||
+	    magic != DC_RTC_MAGIC ||
+	    fread(real, 1, 5, f) != 5 ||
+	    fread(latched, 1, 5, f) != 5 ||
+	    fread(&stamp, 1, sizeof(stamp), f) != sizeof(stamp)) {
+		fclose(f);
+		return -1;
+	}
+
+	fclose(f);
+	if (unix_sec)
+		*unix_sec = stamp;
+	return 0;
+}
+
+int dc_rtc_write_file(const char *rtc_path, const uint8_t real[5],
+		      const uint8_t latched[5], uint32_t unix_sec)
+{
+	char tmp_path[272];
+	FILE *f;
+	const uint32_t magic = DC_RTC_MAGIC;
+
+	if (!rtc_path || !real || !latched)
+		return -1;
+
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", rtc_path);
+	f = fopen(tmp_path, "wb");
+	if (!f)
+		return -1;
+
+	if (fwrite(&magic, 1, sizeof(magic), f) != sizeof(magic) ||
+	    fwrite(real, 1, 5, f) != 5 ||
+	    fwrite(latched, 1, 5, f) != 5 ||
+	    fwrite(&unix_sec, 1, sizeof(unix_sec), f) != sizeof(unix_sec) ||
+	    fflush(f) != 0) {
+		fclose(f);
+		remove(tmp_path);
+		return -1;
+	}
+
+	fclose(f);
+	remove(rtc_path);
+	if (rename(tmp_path, rtc_path) != 0) {
 		remove(tmp_path);
 		return -1;
 	}

@@ -136,6 +136,8 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 - [x] Scale modes, status bar HUD, volume/mute, audio buffer modes
 - [x] Toast notifications and controls reference screen
 - [x] Atomic `.sav` writes, pause load with `gb_reset()`, save error feedback
+- [x] MBC3 RTC `.rtc` sidecar with wall-clock catch-up
+- [x] Pause-menu erase save, 4× fast-forward (L+R), extra boot ROM search paths
 - [ ] Burn test: self-bootable CDI/GDI on hardware
 
 **Deliverable:** Self-contained CDI/GDI image without PC assistance.
@@ -173,6 +175,7 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 | Y | Cycle palette |
 | A+B+X+Y+Start | Quit to Dreamcast loader |
 | L / R trigger | Fast-forward (2×; ignored while Start is held) |
+| L + R trigger | Fast-forward 4× |
 
 ---
 
@@ -180,7 +183,7 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 
 | Layer | Method |
 |-------|--------|
-| Core accuracy | Host `make -C test` (core); `make -C test ci` runs `extras_test` for `ini_kv`, `audio_processor`, and `audio_ring` |
+| Core accuracy | Host `make -C test` (core); `make -C test ci` runs `extras_test` for `ini_kv`, `audio_processor`, `audio_ring`, and `zip_rom` |
 | DC build | `sh-elf-gcc -Wall -Wextra` clean compile |
 | Functional | cpu_instrs, dmg-acid2 via dcload |
 | Game spot-checks | Tetris, Pokémon Blue, Oracle of Seasons, Shantae |

@@ -30,6 +30,8 @@ struct dc_input_state
 	unsigned int fast_mode;
 };
 
+struct maple_device *dc_input_controller(void);
+
 void dc_input_init(void);
 /** Clear held-button edge state after context switches (game ↔ menu). */
 void dc_input_flush_edges(void);

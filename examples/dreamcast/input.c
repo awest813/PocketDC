@@ -12,9 +12,23 @@
 static maple_device_t *controller;
 static uint32_t previous_buttons;
 
+struct maple_device *dc_input_controller(void)
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		maple_device_t *dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
+
+		if (dev)
+			return (struct maple_device *)dev;
+	}
+
+	return NULL;
+}
+
 void dc_input_init(void)
 {
-	controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	controller = (maple_device_t *)dc_input_controller();
 	previous_buttons = 0xFFFF;
 }
 
@@ -146,7 +160,7 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	state->cycle_scale = false;
 	state->system_exit = false;
 
-	controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+	controller = (maple_device_t *)dc_input_controller();
 	if (!controller) {
 		gb->direct.joypad = 0xFF;
 		state->joypad = 0xFF;
@@ -202,11 +216,15 @@ void dc_input_poll(struct dc_input_state *state, struct gb_s *gb)
 	state->joypad = dc_buttons_to_joypad(pad);
 	gb->direct.joypad = state->joypad;
 
-	/* Start+L cycles scale; don't treat that chord as fast-forward. */
+	/* Start+L cycles scale; L+R is 4x, either trigger is 2x. */
 	if (!(buttons & CONT_START) &&
-	    ((buttons & CONT_LTRIGGER) || (buttons & CONT_RTRIGGER)))
-		state->fast_mode = 2;
-	else
+	    ((buttons & CONT_LTRIGGER) || (buttons & CONT_RTRIGGER))) {
+		if ((buttons & CONT_LTRIGGER) && (buttons & CONT_RTRIGGER))
+			state->fast_mode = 4;
+		else
+			state->fast_mode = 2;
+	} else {
 		state->fast_mode = 1;
+	}
 	previous_buttons = buttons;
 }

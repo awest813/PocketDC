@@ -1,6 +1,6 @@
 # PocketDC — Phased Implementation
 
-This document tracks the implementation plan for **PocketDC**, a Dreamcast port of **Walnut-CGB** via **KallistiOS (KOS)**. The core library (`walnut_cgb.h`) stays unchanged; all platform work lives in `examples/dreamcast/`.
+This document tracks the implementation plan for **PocketDC**, a Dreamcast port of **Walnut-CGB** via **KallistiOS (KOS)**. Platform work lives in `examples/dreamcast/`. The core (`walnut_cgb.h`) includes an MIT savestate API (`gb_serialize` / `gb_deserialize`); PocketDC writes slot 0 as `.ss0` beside the ROM.
 
 ## Feasibility Summary
 
@@ -138,6 +138,7 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 - [x] Atomic `.sav` writes, pause load with `gb_reset()`, save error feedback
 - [x] MBC3 RTC `.rtc` sidecar with wall-clock catch-up
 - [x] Pause-menu erase save, 4× fast-forward (L+R), extra boot ROM search paths
+- [x] MIT `gb_serialize` API and pause-menu Save/Load State (`.ss0`)
 - [ ] Burn test: self-bootable CDI/GDI on hardware
 
 **Deliverable:** Self-contained CDI/GDI image without PC assistance.
@@ -183,7 +184,7 @@ dc-tool -x walnut-dc.elf /pc/roms/game.gb
 
 | Layer | Method |
 |-------|--------|
-| Core accuracy | Host `make -C test` (core); `make -C test ci` runs `extras_test` for `ini_kv`, `audio_processor`, `audio_ring`, and `zip_rom` |
+| Core accuracy | Host `make -C test` (core); `make -C test ci` runs `extras_test` for `ini_kv`, `audio_processor`, `audio_ring`, `zip_rom`, and `gb_serialize` |
 | DC build | `sh-elf-gcc -Wall -Wextra` clean compile |
 | Functional | cpu_instrs, dmg-acid2 via dcload |
 | Game spot-checks | Tetris, Pokémon Blue, Oracle of Seasons, Shantae |

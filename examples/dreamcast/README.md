@@ -95,7 +95,7 @@ Load `walnut-dc.elf` with a ROM path argument if your loader supports argv, or u
 
 | Extra | Action |
 |-------|--------|
-| Start + Y | Pause menu (save/load/erase; Main Menu when launched from the menu) |
+| Start + Y | Pause menu (save/load/erase/state; Main Menu when launched from the menu) |
 | Start + A | Reset game |
 | Start + B | Return to main menu (menu mode) or exit (direct load) |
 | Y | Cycle palette |
@@ -138,7 +138,7 @@ Accessible from the main menu or pause menu. Video and audio changes apply immed
 
 Disc metadata is defined in `meta/ip.txt` (processed by KOS `makeip`).
 
-Battery saves write `name.sav` next to the ROM (including zipped ROMs). MBC3 clocks (Pokémon Gold/Silver and similar) also write `name.rtc` and catch up from wall time on load (up to 7 days).
+Battery saves write `name.sav` next to the ROM (including zipped ROMs). MBC3 clocks (Pokémon Gold/Silver and similar) also write `name.rtc` and catch up from wall time on load (up to 7 days). Pause-menu **Save State** writes `name.ss0` (Walnut-CGB MIT serialize blob; too large for VMU).
 
 ## Optional Files
 
@@ -154,7 +154,8 @@ Phase 3 (ROM browser + disc packaging) is implemented. Phase 4 hardware validati
 
 - **Controls** screen in the main menu
 - **Toast messages** for palette changes, frameskip, fast-forward, and autosave
-- **Save/load/erase** confirmations in the pause menu
+- **Save/load/erase** battery RAM in the pause menu
+- **Save/Load State** (`.ss0` MIT serialize snapshots)
 - **MBC3 RTC** persistence (`.rtc` sidecar)
 - **Loading screen** when starting a ROM from the browser
 - **Save indicators** in the ROM library
@@ -169,6 +170,6 @@ Phase 3 (ROM browser + disc packaging) is implemented. Phase 4 hardware validati
 
 ## Licensing
 
-PocketDC is MIT licensed. Shared MIT modules live in `extras/audio_processor/` (volume/mute/DC block), `extras/audio_ring/` (audio buffering), `extras/ini_kv/` (config I/O), and `extras/zip_rom/` (ZIP Game Boy ROMs). MiniGB APU has its own license in `examples/sdl2/minigb_apu/LICENSE`. KOS requires attribution in distributed binaries. ZIP inflate uses zlib.
+PocketDC is MIT licensed. Shared MIT modules live in `extras/audio_processor/` (volume/mute/DC block), `extras/audio_ring/` (audio buffering), `extras/ini_kv/` (config I/O), and `extras/zip_rom/` (ZIP Game Boy ROMs). Savestates use the MIT `gb_serialize` API in `walnut_cgb.h`. MiniGB APU has its own license in `examples/sdl2/minigb_apu/LICENSE`. KOS requires attribution in distributed binaries. ZIP inflate uses zlib.
 
 Do not ship copyrighted ROMs with homebrew releases.

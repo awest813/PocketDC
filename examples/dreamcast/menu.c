@@ -382,16 +382,19 @@ enum dc_main_menu_action dc_main_menu_run(const struct dc_settings *settings)
 }
 
 enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save,
-					    bool can_load, bool menu_mode)
+					    bool can_load, bool can_save_state,
+					    bool can_load_state, bool menu_mode)
 {
 	char subtitle[80];
 	char paused_line[80];
-	const char *items[8];
+	const char *items[12];
 	struct dc_menu_list menu;
 	int choice;
 	int save_idx = -1;
 	int load_idx = -1;
 	int erase_idx = -1;
+	int save_state_idx = -1;
+	int load_state_idx = -1;
 	int settings_idx;
 	int main_menu_idx = -1;
 	int exit_idx;
@@ -413,6 +416,14 @@ enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save
 		items[i++] = "Load Game";
 		erase_idx = i;
 		items[i++] = "Erase Save";
+	}
+	if (can_save_state) {
+		save_state_idx = i;
+		items[i++] = "Save State";
+	}
+	if (can_load_state) {
+		load_state_idx = i;
+		items[i++] = "Load State";
 	}
 	settings_idx = i;
 	items[i++] = "Settings";
@@ -444,6 +455,10 @@ enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save
 			return DC_PAUSE_MENU_NONE;
 		return DC_PAUSE_MENU_ERASE;
 	}
+	if (choice == save_state_idx)
+		return DC_PAUSE_MENU_SAVE_STATE;
+	if (choice == load_state_idx)
+		return DC_PAUSE_MENU_LOAD_STATE;
 	if (choice == settings_idx)
 		return DC_PAUSE_MENU_SETTINGS;
 	if (choice == main_menu_idx)
@@ -535,6 +550,8 @@ void dc_controls_menu_run(void)
 		"Save Game = write .sav alongside ROM",
 		"Load Game = reload .sav and reset",
 		"Erase Save = delete .sav/.rtc (confirm)",
+		"Save State = write .ss0 snapshot (MIT serialize)",
+		"Load State = restore .ss0 (same ROM only)",
 		"Main Menu = leave game (menu launch)",
 		"Exit PocketDC = quit the emulator",
 		"Autosave interval in Settings (default 60s)",
@@ -622,6 +639,7 @@ void dc_about_menu_run(void)
 		"Frontend",
 		"KallistiOS  PVR  AICA  Maple",
 		"audio_processor  audio_ring  ini_kv  zip_rom",
+		"gb_serialize savestates (.ss0, MIT)",
 		"",
 		"Conventions",
 		"A+B+X+Y+Start = quit to loader",

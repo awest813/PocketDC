@@ -29,6 +29,8 @@ enum dc_pause_menu_action
 	DC_PAUSE_MENU_SAVE,
 	DC_PAUSE_MENU_LOAD,
 	DC_PAUSE_MENU_ERASE,
+	DC_PAUSE_MENU_SAVE_STATE,
+	DC_PAUSE_MENU_LOAD_STATE,
 	DC_PAUSE_MENU_SETTINGS,
 	DC_PAUSE_MENU_MAIN_MENU,
 	DC_PAUSE_MENU_EXIT
@@ -37,7 +39,8 @@ enum dc_pause_menu_action
 bool dc_start_menu_run(void);
 enum dc_main_menu_action dc_main_menu_run(const struct dc_settings *settings);
 enum dc_pause_menu_action dc_pause_menu_run(const char *rom_title, bool can_save,
-					    bool can_load, bool menu_mode);
+					    bool can_load, bool can_save_state,
+					    bool can_load_state, bool menu_mode);
 typedef void (*dc_settings_apply_cb)(struct dc_settings *settings);
 
 bool dc_settings_menu_run(struct dc_settings *settings);

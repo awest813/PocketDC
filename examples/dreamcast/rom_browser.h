@@ -87,6 +87,8 @@ int dc_rom_load(struct dc_priv *priv, const char *rom_path);
 void dc_rom_unload(struct dc_priv *priv);
 int dc_save_path_from_rom(const char *rom_path, char *save_path, size_t save_path_len);
 int dc_rtc_path_from_save(const char *save_path, char *rtc_path, size_t rtc_path_len);
+int dc_state_path_from_save(const char *save_path, char *state_path,
+			    size_t state_path_len);
 int dc_cart_ram_read_file(const char *save_path, uint8_t **dest, size_t len);
 int dc_cart_ram_reload_file(const char *save_path, uint8_t *dest, size_t len);
 int dc_cart_ram_write_file(const char *save_path, const uint8_t *data, size_t len);

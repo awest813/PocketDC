@@ -1,11 +1,16 @@
 #include "minctest.h"
 
+#define ENABLE_SOUND 0
+#define ENABLE_LCD 1
+#include "../walnut_cgb.h"
+
 #include "../extras/audio_processor/audio_processor.h"
 #include "../extras/audio_ring/audio_ring.h"
 #include "../extras/ini_kv/ini_kv.h"
 #include "../extras/zip_rom/zip_rom.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -470,6 +475,156 @@ static void test_zip_rom_stored_and_deflate(void)
 	remove(empty_path);
 }
 
+static uint8_t ser_rom[0x8000];
+static uint8_t ser_ram[0x2000];
+static int ser_errors;
+
+static uint8_t ser_rom_read(struct gb_s *gb, const uint_fast32_t addr)
+{
+	(void)gb;
+	if (addr >= sizeof(ser_rom))
+		return 0xFF;
+	return ser_rom[addr];
+}
+
+static uint16_t ser_rom_read16(struct gb_s *gb, const uint_fast32_t addr)
+{
+	uint16_t lo = ser_rom_read(gb, addr);
+	uint16_t hi = ser_rom_read(gb, addr + 1);
+
+	return (uint16_t)(lo | (hi << 8));
+}
+
+static uint32_t ser_rom_read32(struct gb_s *gb, const uint_fast32_t addr)
+{
+	uint32_t v = ser_rom_read16(gb, addr);
+	v |= ((uint32_t)ser_rom_read16(gb, addr + 2)) << 16;
+	return v;
+}
+
+static uint8_t ser_ram_read(struct gb_s *gb, const uint_fast32_t addr)
+{
+	(void)gb;
+	if (addr >= sizeof(ser_ram))
+		return 0xFF;
+	return ser_ram[addr];
+}
+
+static void ser_ram_write(struct gb_s *gb, const uint_fast32_t addr, const uint8_t val)
+{
+	(void)gb;
+	if (addr < sizeof(ser_ram))
+		ser_ram[addr] = val;
+}
+
+static void ser_error(struct gb_s *gb, const enum gb_error_e err, const uint16_t addr)
+{
+	(void)gb;
+	(void)err;
+	(void)addr;
+	ser_errors++;
+}
+
+static void ser_make_rom(void)
+{
+	uint8_t x = 0;
+	uint16_t i;
+
+	memset(ser_rom, 0, sizeof(ser_rom));
+	memset(ser_ram, 0, sizeof(ser_ram));
+	memcpy(ser_rom + 0x0134, "SERTEST", 7);
+	ser_rom[0x0147] = 0x03;
+	ser_rom[0x0148] = 0x00;
+	ser_rom[0x0149] = 0x02;
+	for (i = 0x0134; i <= 0x014C; i++)
+		x = (uint8_t)(x - ser_rom[i] - 1);
+	ser_rom[0x014D] = x;
+	ser_rom[0x0100] = 0x00;
+	ser_rom[0x0101] = 0x18;
+	ser_rom[0x0102] = (uint8_t)-2;
+}
+
+static int ser_init(struct gb_s *gb)
+{
+	ser_make_rom();
+	ser_errors = 0;
+	return gb_init(gb, ser_rom_read, ser_rom_read16, ser_rom_read32,
+		       ser_ram_read, ser_ram_write, ser_error, NULL);
+}
+
+static void test_gb_serialize_roundtrip(void)
+{
+	struct gb_s gb;
+	size_t size;
+	uint8_t *buf;
+
+	lequal(ser_init(&gb), GB_INIT_NO_ERROR);
+	gb.cpu_reg.a = 0x42;
+	gb.cpu_reg.pc.reg = 0x0150;
+	gb.wram[0] = 0xAB;
+	gb.vram[1] = 0xCD;
+	gb.oam[2] = 0xEF;
+	gb.hram_io[0x80] = 0x11;
+	ser_ram[0] = 0x5A;
+	gb.rtc_real.bytes[0] = 12;
+	gb.selected_rom_bank = 1;
+	gb.direct.frame_skip = true;
+
+	size = gb_serialize_size(&gb);
+	lok(size > 64);
+	buf = (uint8_t *)malloc(size);
+	lok(buf != NULL);
+	lequal(gb_serialize(&gb, buf, size), GB_SERIALIZE_OK);
+
+	gb.cpu_reg.a = 0;
+	gb.cpu_reg.pc.reg = 0x0100;
+	gb.wram[0] = 0;
+	gb.vram[1] = 0;
+	gb.oam[2] = 0;
+	gb.hram_io[0x80] = 0;
+	ser_ram[0] = 0;
+	gb.rtc_real.bytes[0] = 0;
+	gb.direct.frame_skip = false;
+	gb.direct.priv = (void *)(uintptr_t)0x1;
+
+	lequal(gb_deserialize(&gb, buf, size), GB_SERIALIZE_OK);
+	lequal(gb.cpu_reg.a, 0x42);
+	lequal(gb.cpu_reg.pc.reg, 0x0150);
+	lequal(gb.wram[0], 0xAB);
+	lequal(gb.vram[1], 0xCD);
+	lequal(gb.oam[2], 0xEF);
+	lequal(gb.hram_io[0x80], 0x11);
+	lequal(ser_ram[0], 0x5A);
+	lequal(gb.rtc_real.bytes[0], 12);
+	lok(gb.direct.frame_skip);
+	lok(gb.gb_rom_read == ser_rom_read);
+	lok(gb.direct.priv == (void *)(uintptr_t)0x1);
+	lequal(ser_errors, 0);
+
+	buf[0] ^= 0xFF;
+	lequal(gb_deserialize(&gb, buf, size), GB_SERIALIZE_ERROR_MAGIC);
+	free(buf);
+}
+
+static void test_gb_serialize_rom_mismatch(void)
+{
+	struct gb_s gb;
+	size_t size;
+	uint8_t *buf;
+
+	lequal(ser_init(&gb), GB_INIT_NO_ERROR);
+	size = gb_serialize_size(&gb);
+	buf = (uint8_t *)malloc(size);
+	lok(buf != NULL);
+	lequal(gb_serialize(&gb, buf, size), GB_SERIALIZE_OK);
+
+	buf[8] ^= 0xFF;
+	lequal(gb_deserialize(&gb, buf, size), GB_SERIALIZE_ERROR_ROM);
+	lequal(gb_serialize(&gb, NULL, size), GB_SERIALIZE_ERROR_ARG);
+	lequal((int)gb_serialize_size(NULL), 0);
+	free(buf);
+}
+
 int main(void)
 {
 	lrun("ini_kv_get_int", test_ini_kv_get_int);
@@ -488,6 +643,8 @@ int main(void)
 	lrun("audio_ring_reset", test_audio_ring_reset);
 	lrun("zip_rom_names", test_zip_rom_names);
 	lrun("zip_rom_stored_and_deflate", test_zip_rom_stored_and_deflate);
+	lrun("gb_serialize_roundtrip", test_gb_serialize_roundtrip);
+	lrun("gb_serialize_rom_mismatch", test_gb_serialize_rom_mismatch);
 	lresults();
 	return lfails != 0;
 }

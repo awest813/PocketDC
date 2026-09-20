@@ -78,6 +78,7 @@
 #define WALNUT_GB_16BIT_ALIGNED 1
 #define WALNUT_GB_32BIT_ALIGNED 1
 #define WALNUT_GB_RGB565_BIGENDIAN 0
+struct gb_s;
 uint8_t __gb_read(struct gb_s *gb, uint16_t addr);
 void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val);
 void __gb_write16(struct gb_s *gb, uint_fast16_t addr, uint16_t val);
@@ -644,6 +645,28 @@ enum gb_serial_rx_ret_e
 	GB_SERIAL_RX_SUCCESS = 0,
 	GB_SERIAL_RX_NO_CONNECTION = 1
 };
+
+/**
+ * Walnut-CGB savestate API (MIT License).
+ * Packs CPU, MBC, RTC, timing counters, WRAM/VRAM/OAM/HRAM, CGB extras, and
+ * cartridge RAM. Callbacks, priv, and live joypad are never stored.
+ */
+enum gb_serialize_error_e
+{
+	GB_SERIALIZE_OK = 0,
+	GB_SERIALIZE_ERROR_ARG = -1,
+	GB_SERIALIZE_ERROR_BUFFER = -2,
+	GB_SERIALIZE_ERROR_MAGIC = -3,
+	GB_SERIALIZE_ERROR_VERSION = -4,
+	GB_SERIALIZE_ERROR_FEATURE = -5,
+	GB_SERIALIZE_ERROR_ROM = -6,
+	GB_SERIALIZE_ERROR_CART = -7
+};
+
+#define GB_SERIALIZE_MAGIC	0x53424757u	/* "WGBS" little-endian */
+#define GB_SERIALIZE_VERSION	1u
+#define GB_SERIALIZE_FLAG_CGB	0x0001u
+#define GB_SERIALIZE_FLAG_SAFE_DF	0x0002u
 
 union cart_rtc
 {
@@ -7784,6 +7807,416 @@ void gb_set_rtc(struct gb_s *gb, const struct tm * const time)
 	gb->rtc_real.bytes[3] = time->tm_yday & 0xFF; /* Low 8 bits of day counter. */
 	gb->rtc_real.bytes[4] = time->tm_yday >> 8; /* High 1 bit of day counter. */
 }
+
+struct gb_ser
+{
+	uint8_t *out;
+	const uint8_t *in;
+	size_t cap;
+	size_t pos;
+	int err;
+};
+
+static void gb_ser_put_u8(struct gb_ser *io, uint8_t v)
+{
+	if(io->err)
+		return;
+
+	if(io->out)
+	{
+		if(io->pos >= io->cap)
+		{
+			io->err = GB_SERIALIZE_ERROR_BUFFER;
+			return;
+		}
+
+		io->out[io->pos] = v;
+	}
+
+	io->pos++;
+}
+
+static void gb_ser_put_u16(struct gb_ser *io, uint16_t v)
+{
+	gb_ser_put_u8(io, (uint8_t)(v & 0xFF));
+	gb_ser_put_u8(io, (uint8_t)(v >> 8));
+}
+
+static void gb_ser_put_u32(struct gb_ser *io, uint32_t v)
+{
+	gb_ser_put_u16(io, (uint16_t)(v & 0xFFFF));
+	gb_ser_put_u16(io, (uint16_t)(v >> 16));
+}
+
+static void gb_ser_put_bytes(struct gb_ser *io, const uint8_t *src, size_t n)
+{
+	size_t i;
+
+	for(i = 0; i < n; i++)
+		gb_ser_put_u8(io, src[i]);
+}
+
+static uint8_t gb_ser_get_u8(struct gb_ser *io)
+{
+	uint8_t v;
+
+	if(io->err)
+		return 0;
+
+	if(io->pos >= io->cap)
+	{
+		io->err = GB_SERIALIZE_ERROR_BUFFER;
+		return 0;
+	}
+
+	v = io->in[io->pos];
+	io->pos++;
+	return v;
+}
+
+static uint16_t gb_ser_get_u16(struct gb_ser *io)
+{
+	uint16_t lo = gb_ser_get_u8(io);
+	uint16_t hi = gb_ser_get_u8(io);
+
+	return (uint16_t)(lo | (hi << 8));
+}
+
+static uint32_t gb_ser_get_u32(struct gb_ser *io)
+{
+	uint32_t lo = gb_ser_get_u16(io);
+	uint32_t hi = gb_ser_get_u16(io);
+
+	return lo | (hi << 16);
+}
+
+static void gb_ser_get_bytes(struct gb_ser *io, uint8_t *dst, size_t n)
+{
+	size_t i;
+
+	for(i = 0; i < n; i++)
+		dst[i] = gb_ser_get_u8(io);
+}
+
+static uint16_t gb_serialize_build_flags(void)
+{
+	uint16_t flags = 0;
+
+#if WALNUT_FULL_GBC_SUPPORT
+	flags |= GB_SERIALIZE_FLAG_CGB;
+#endif
+#if (WALNUT_GB_SAFE_DUALFETCH_DMA || WALNUT_GB_SAFE_DUALFETCH_MBC)
+	flags |= GB_SERIALIZE_FLAG_SAFE_DF;
+#endif
+	return flags;
+}
+
+static size_t gb_serialize_cart_len(struct gb_s *gb)
+{
+	size_t ram_size = 0;
+
+	if(gb_get_save_size_s(gb, &ram_size) != 0)
+		return 0;
+
+	return ram_size;
+}
+
+static void gb_serialize_emit(struct gb_s *gb, struct gb_ser *io)
+{
+	uint8_t cpu_flags;
+	uint8_t disp_flags;
+	uint8_t direct_flags;
+	size_t cart_len;
+	size_t i;
+
+	gb_ser_put_u32(io, GB_SERIALIZE_MAGIC);
+	gb_ser_put_u16(io, (uint16_t)GB_SERIALIZE_VERSION);
+	gb_ser_put_u16(io, gb_serialize_build_flags());
+
+	gb_ser_put_u8(io, gb->gb_rom_read(gb, ROM_HEADER_CHECKSUM_LOC));
+	gb_ser_put_u8(io, gb_colour_hash(gb));
+	gb_ser_put_u8(io, gb->gb_rom_read(gb, 0x0147));
+	gb_ser_put_u8(io, gb->gb_rom_read(gb, 0x0148));
+	gb_ser_put_u8(io, gb->gb_rom_read(gb, 0x0149));
+
+	cpu_flags = 0;
+	if(gb->gb_halt)
+		cpu_flags |= 0x01;
+	if(gb->gb_ime)
+		cpu_flags |= 0x02;
+	if(gb->gb_frame)
+		cpu_flags |= 0x04;
+	if(gb->lcd_blank)
+		cpu_flags |= 0x08;
+	if(gb->cart_is_mbc3O)
+		cpu_flags |= 0x10;
+#if (WALNUT_GB_SAFE_DUALFETCH_DMA || WALNUT_GB_SAFE_DUALFETCH_MBC)
+	if(gb->prefetch_invalid)
+		cpu_flags |= 0x20;
+#endif
+	gb_ser_put_u8(io, cpu_flags);
+
+	gb_ser_put_u8(io, (uint8_t)gb->mbc);
+	gb_ser_put_u8(io, gb->cart_ram);
+	gb_ser_put_u16(io, gb->num_rom_banks_mask);
+	gb_ser_put_u8(io, gb->num_ram_banks);
+	gb_ser_put_u16(io, gb->selected_rom_bank);
+	gb_ser_put_u8(io, gb->cart_ram_bank);
+	gb_ser_put_u8(io, gb->enable_cart_ram);
+	gb_ser_put_u8(io, gb->cart_mode_select);
+	gb_ser_put_bytes(io, gb->rtc_latched.bytes, 5);
+	gb_ser_put_bytes(io, gb->rtc_real.bytes, 5);
+
+	gb_ser_put_u8(io, gb->cpu_reg.a);
+	gb_ser_put_u8(io, gb->cpu_reg.f.reg);
+	gb_ser_put_u16(io, gb->cpu_reg.bc.reg);
+	gb_ser_put_u16(io, gb->cpu_reg.de.reg);
+	gb_ser_put_u16(io, gb->cpu_reg.hl.reg);
+	gb_ser_put_u16(io, gb->cpu_reg.sp.reg);
+	gb_ser_put_u16(io, gb->cpu_reg.pc.reg);
+
+	gb_ser_put_u32(io, (uint32_t)gb->counter.lcd_count);
+	gb_ser_put_u32(io, (uint32_t)gb->counter.div_count);
+	gb_ser_put_u32(io, (uint32_t)gb->counter.tima_count);
+	gb_ser_put_u32(io, (uint32_t)gb->counter.serial_count);
+	gb_ser_put_u32(io, (uint32_t)gb->counter.rtc_count);
+	gb_ser_put_u32(io, (uint32_t)gb->counter.lcd_off_count);
+
+	gb_ser_put_bytes(io, gb->display.bg_palette, 4);
+	gb_ser_put_bytes(io, gb->display.sp_palette, 8);
+	gb_ser_put_u8(io, gb->display.window_clear);
+	gb_ser_put_u8(io, gb->display.WY);
+	disp_flags = 0;
+	if(gb->display.frame_skip_count)
+		disp_flags |= 0x01;
+	if(gb->display.interlace_count)
+		disp_flags |= 0x02;
+	gb_ser_put_u8(io, disp_flags);
+
+#if WALNUT_FULL_GBC_SUPPORT
+	gb_ser_put_u8(io, gb->cgb.cgbMode);
+	gb_ser_put_u8(io, gb->cgb.doubleSpeed);
+	gb_ser_put_u8(io, gb->cgb.doubleSpeedPrep);
+	gb_ser_put_u8(io, gb->cgb.wramBank);
+	gb_ser_put_u16(io, gb->cgb.wramBankOffset);
+	gb_ser_put_u8(io, gb->cgb.vramBank);
+	gb_ser_put_u16(io, gb->cgb.vramBankOffset);
+	for(i = 0; i < 0x40; i++)
+		gb_ser_put_u16(io, gb->cgb.fixPalette[i]);
+	gb_ser_put_bytes(io, gb->cgb.OAMPalette, 0x40);
+	gb_ser_put_bytes(io, gb->cgb.BGPalette, 0x40);
+	gb_ser_put_u8(io, gb->cgb.OAMPaletteID);
+	gb_ser_put_u8(io, gb->cgb.BGPaletteID);
+	gb_ser_put_u8(io, gb->cgb.OAMPaletteInc);
+	gb_ser_put_u8(io, gb->cgb.BGPaletteInc);
+	gb_ser_put_u8(io, gb->cgb.dmaActive);
+	gb_ser_put_u8(io, gb->cgb.dmaMode);
+	gb_ser_put_u8(io, gb->cgb.dmaSize);
+	gb_ser_put_u16(io, gb->cgb.dmaSource);
+	gb_ser_put_u16(io, gb->cgb.dmaDest);
+#endif
+
+	direct_flags = 0;
+	if(gb->direct.interlace)
+		direct_flags |= 0x01;
+	if(gb->direct.frame_skip)
+		direct_flags |= 0x02;
+	gb_ser_put_u8(io, direct_flags);
+
+	gb_ser_put_bytes(io, gb->wram, WRAM_SIZE);
+	gb_ser_put_bytes(io, gb->vram, VRAM_SIZE);
+	gb_ser_put_bytes(io, gb->oam, OAM_SIZE);
+	gb_ser_put_bytes(io, gb->hram_io, HRAM_IO_SIZE);
+
+	cart_len = gb_serialize_cart_len(gb);
+	gb_ser_put_u32(io, (uint32_t)cart_len);
+	for(i = 0; i < cart_len; i++)
+		gb_ser_put_u8(io, gb->gb_cart_ram_read(gb, (uint_fast32_t)i));
+}
+
+size_t gb_serialize_size(struct gb_s *gb)
+{
+	struct gb_ser io;
+
+	if(!gb)
+		return 0;
+
+	memset(&io, 0, sizeof(io));
+	io.cap = (size_t)-1;
+	gb_serialize_emit(gb, &io);
+	if(io.err)
+		return 0;
+
+	return io.pos;
+}
+
+int gb_serialize(struct gb_s *gb, void *buf, size_t buf_size)
+{
+	struct gb_ser io;
+
+	if(!gb || !buf)
+		return GB_SERIALIZE_ERROR_ARG;
+
+	memset(&io, 0, sizeof(io));
+	io.out = (uint8_t *)buf;
+	io.cap = buf_size;
+	gb_serialize_emit(gb, &io);
+	if(io.err)
+		return io.err;
+
+	return GB_SERIALIZE_OK;
+}
+
+int gb_deserialize(struct gb_s *gb, const void *buf, size_t buf_size)
+{
+	struct gb_ser io;
+	uint32_t magic;
+	uint16_t version;
+	uint16_t flags;
+	uint8_t hdr_chk;
+	uint8_t colour;
+	uint8_t cart_type;
+	uint8_t rom_size_code;
+	uint8_t ram_size_code;
+	uint8_t cpu_flags;
+	uint8_t disp_flags;
+	uint8_t direct_flags;
+	uint32_t cart_len;
+	size_t expect_cart;
+	size_t i;
+
+	if(!gb || !buf)
+		return GB_SERIALIZE_ERROR_ARG;
+
+	memset(&io, 0, sizeof(io));
+	io.in = (const uint8_t *)buf;
+	io.cap = buf_size;
+
+	magic = gb_ser_get_u32(&io);
+	version = gb_ser_get_u16(&io);
+	flags = gb_ser_get_u16(&io);
+	if(io.err)
+		return io.err;
+	if(magic != GB_SERIALIZE_MAGIC)
+		return GB_SERIALIZE_ERROR_MAGIC;
+	if(version != GB_SERIALIZE_VERSION)
+		return GB_SERIALIZE_ERROR_VERSION;
+	if(flags != gb_serialize_build_flags())
+		return GB_SERIALIZE_ERROR_FEATURE;
+
+	hdr_chk = gb_ser_get_u8(&io);
+	colour = gb_ser_get_u8(&io);
+	cart_type = gb_ser_get_u8(&io);
+	rom_size_code = gb_ser_get_u8(&io);
+	ram_size_code = gb_ser_get_u8(&io);
+	if(io.err)
+		return io.err;
+	if(hdr_chk != gb->gb_rom_read(gb, ROM_HEADER_CHECKSUM_LOC) ||
+	   colour != gb_colour_hash(gb) ||
+	   cart_type != gb->gb_rom_read(gb, 0x0147) ||
+	   rom_size_code != gb->gb_rom_read(gb, 0x0148) ||
+	   ram_size_code != gb->gb_rom_read(gb, 0x0149))
+		return GB_SERIALIZE_ERROR_ROM;
+
+	cpu_flags = gb_ser_get_u8(&io);
+	gb->gb_halt = (cpu_flags & 0x01) != 0;
+	gb->gb_ime = (cpu_flags & 0x02) != 0;
+	gb->gb_frame = (cpu_flags & 0x04) != 0;
+	gb->lcd_blank = (cpu_flags & 0x08) != 0;
+	gb->cart_is_mbc3O = (cpu_flags & 0x10) != 0;
+#if (WALNUT_GB_SAFE_DUALFETCH_DMA || WALNUT_GB_SAFE_DUALFETCH_MBC)
+	gb->prefetch_invalid = (cpu_flags & 0x20) != 0;
+#endif
+
+	gb->mbc = (int8_t)gb_ser_get_u8(&io);
+	gb->cart_ram = gb_ser_get_u8(&io);
+	gb->num_rom_banks_mask = gb_ser_get_u16(&io);
+	gb->num_ram_banks = gb_ser_get_u8(&io);
+	gb->selected_rom_bank = gb_ser_get_u16(&io);
+	gb->cart_ram_bank = gb_ser_get_u8(&io);
+	gb->enable_cart_ram = gb_ser_get_u8(&io);
+	gb->cart_mode_select = gb_ser_get_u8(&io);
+	gb_ser_get_bytes(&io, gb->rtc_latched.bytes, 5);
+	gb_ser_get_bytes(&io, gb->rtc_real.bytes, 5);
+
+	gb->cpu_reg.a = gb_ser_get_u8(&io);
+	gb->cpu_reg.f.reg = gb_ser_get_u8(&io);
+	gb->cpu_reg.bc.reg = gb_ser_get_u16(&io);
+	gb->cpu_reg.de.reg = gb_ser_get_u16(&io);
+	gb->cpu_reg.hl.reg = gb_ser_get_u16(&io);
+	gb->cpu_reg.sp.reg = gb_ser_get_u16(&io);
+	gb->cpu_reg.pc.reg = gb_ser_get_u16(&io);
+
+	gb->counter.lcd_count = (uint_fast16_t)gb_ser_get_u32(&io);
+	gb->counter.div_count = (uint_fast16_t)gb_ser_get_u32(&io);
+	gb->counter.tima_count = (uint_fast16_t)gb_ser_get_u32(&io);
+	gb->counter.serial_count = (uint_fast16_t)gb_ser_get_u32(&io);
+	gb->counter.rtc_count = (uint_fast32_t)gb_ser_get_u32(&io);
+	gb->counter.lcd_off_count = (uint_fast32_t)gb_ser_get_u32(&io);
+
+	gb_ser_get_bytes(&io, gb->display.bg_palette, 4);
+	gb_ser_get_bytes(&io, gb->display.sp_palette, 8);
+	gb->display.window_clear = gb_ser_get_u8(&io);
+	gb->display.WY = gb_ser_get_u8(&io);
+	disp_flags = gb_ser_get_u8(&io);
+	gb->display.frame_skip_count = (disp_flags & 0x01) != 0;
+	gb->display.interlace_count = (disp_flags & 0x02) != 0;
+
+#if WALNUT_FULL_GBC_SUPPORT
+	gb->cgb.cgbMode = gb_ser_get_u8(&io);
+	gb->cgb.doubleSpeed = gb_ser_get_u8(&io);
+	gb->cgb.doubleSpeedPrep = gb_ser_get_u8(&io);
+	gb->cgb.wramBank = gb_ser_get_u8(&io);
+	gb->cgb.wramBankOffset = gb_ser_get_u16(&io);
+	gb->cgb.vramBank = gb_ser_get_u8(&io);
+	gb->cgb.vramBankOffset = gb_ser_get_u16(&io);
+	for(i = 0; i < 0x40; i++)
+		gb->cgb.fixPalette[i] = gb_ser_get_u16(&io);
+	gb_ser_get_bytes(&io, gb->cgb.OAMPalette, 0x40);
+	gb_ser_get_bytes(&io, gb->cgb.BGPalette, 0x40);
+	gb->cgb.OAMPaletteID = gb_ser_get_u8(&io);
+	gb->cgb.BGPaletteID = gb_ser_get_u8(&io);
+	gb->cgb.OAMPaletteInc = gb_ser_get_u8(&io);
+	gb->cgb.BGPaletteInc = gb_ser_get_u8(&io);
+	gb->cgb.dmaActive = gb_ser_get_u8(&io);
+	gb->cgb.dmaMode = gb_ser_get_u8(&io);
+	gb->cgb.dmaSize = gb_ser_get_u8(&io);
+	gb->cgb.dmaSource = gb_ser_get_u16(&io);
+	gb->cgb.dmaDest = gb_ser_get_u16(&io);
+#endif
+
+	direct_flags = gb_ser_get_u8(&io);
+	gb->direct.interlace = (direct_flags & 0x01) != 0;
+	gb->direct.frame_skip = (direct_flags & 0x02) != 0;
+
+	gb_ser_get_bytes(&io, gb->wram, WRAM_SIZE);
+	gb_ser_get_bytes(&io, gb->vram, VRAM_SIZE);
+	gb_ser_get_bytes(&io, gb->oam, OAM_SIZE);
+	gb_ser_get_bytes(&io, gb->hram_io, HRAM_IO_SIZE);
+
+	cart_len = gb_ser_get_u32(&io);
+	expect_cart = gb_serialize_cart_len(gb);
+	if(io.err)
+		return io.err;
+	if((size_t)cart_len != expect_cart)
+		return GB_SERIALIZE_ERROR_CART;
+
+	for(i = 0; i < cart_len; i++)
+	{
+		uint8_t v = gb_ser_get_u8(&io);
+
+		if(io.err)
+			return io.err;
+		gb->gb_cart_ram_write(gb, (uint_fast32_t)i, v);
+	}
+
+	if(io.err)
+		return io.err;
+	if(io.pos != buf_size)
+		return GB_SERIALIZE_ERROR_BUFFER;
+
+	return GB_SERIALIZE_OK;
+}
 #endif // WALNUT_GB_HEADER_ONLY
 
 /** Function prototypes: Required functions **/
@@ -7947,6 +8380,30 @@ void gb_set_rtc(struct gb_s *gb, const struct tm * const time);
  */
 void gb_set_bootrom(struct gb_s *gb,
 	uint8_t (*gb_bootrom_read)(struct gb_s*, const uint_fast16_t));
+
+/**
+ * Walnut-CGB savestate API (MIT License).
+ * Does not serialize callbacks, priv, or the current joypad.
+ *
+ * \param gb	An initialised emulator context. Must not be NULL.
+ * \returns	Blob size in bytes, or 0 on error.
+ */
+size_t gb_serialize_size(struct gb_s *gb);
+
+/**
+ * Write emulator state into buf. buf_size must be at least gb_serialize_size().
+ *
+ * \returns	GB_SERIALIZE_OK or a gb_serialize_error_e value.
+ */
+int gb_serialize(struct gb_s *gb, void *buf, size_t buf_size);
+
+/**
+ * Restore emulator state from buf. ROM identity must match the running cart.
+ * Callbacks and priv are left unchanged.
+ *
+ * \returns	GB_SERIALIZE_OK or a gb_serialize_error_e value.
+ */
+int gb_deserialize(struct gb_s *gb, const void *buf, size_t buf_size);
 
 /* Steps the cpu by one instruction, this is the original Peanut-GB dispatch method here for compatibility, or for burning cycles inefficiently if doing preemptive execution */
 void __gb_step_cpu_x(struct gb_s *gb)

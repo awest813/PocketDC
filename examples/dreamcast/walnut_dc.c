@@ -503,6 +503,88 @@ static bool dc_write_save(struct gb_s *gb, struct dc_priv *p)
 	return ok;
 }
 
+static int dc_state_path(const struct dc_priv *p, char *path, size_t path_len)
+{
+	if (p->save_path[0] != '\0')
+		return dc_state_path_from_save(p->save_path, path, path_len);
+	if (p->rom_path[0] != '\0')
+		return dc_state_path_from_save(p->rom_path, path, path_len);
+	return -1;
+}
+
+static bool dc_write_state(struct gb_s *gb, struct dc_priv *p)
+{
+	char path[256];
+	size_t size;
+	uint8_t *buf;
+	int rc;
+
+	if (dc_state_path(p, path, sizeof(path)) != 0)
+		return false;
+
+	size = gb_serialize_size(gb);
+	if (size == 0)
+		return false;
+
+	buf = (uint8_t *)malloc(size);
+	if (!buf)
+		return false;
+
+	if (gb_serialize(gb, buf, size) != GB_SERIALIZE_OK) {
+		free(buf);
+		return false;
+	}
+
+	rc = dc_cart_ram_write_file(path, buf, size);
+	free(buf);
+	return rc == 0;
+}
+
+static int dc_load_state(struct gb_s *gb, struct dc_priv *p)
+{
+	char path[256];
+	FILE *f;
+	long size;
+	uint8_t *buf;
+	int rc;
+
+	if (dc_state_path(p, path, sizeof(path)) != 0)
+		return GB_SERIALIZE_ERROR_ARG;
+
+	f = fopen(path, "rb");
+	if (!f)
+		return GB_SERIALIZE_ERROR_BUFFER;
+
+	if (fseek(f, 0, SEEK_END) != 0) {
+		fclose(f);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	size = ftell(f);
+	if (size <= 0 || size > (512 * 1024)) {
+		fclose(f);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	rewind(f);
+	buf = (uint8_t *)malloc((size_t)size);
+	if (!buf) {
+		fclose(f);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	if (fread(buf, 1, (size_t)size, f) != (size_t)size) {
+		fclose(f);
+		free(buf);
+		return GB_SERIALIZE_ERROR_BUFFER;
+	}
+
+	fclose(f);
+	rc = gb_deserialize(gb, buf, (size_t)size);
+	free(buf);
+	return rc;
+}
+
 /*
  * Pause menu result: 1 = resume, 0 = return to main menu, -1 = exit app.
  */
@@ -520,8 +602,15 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 		const bool can_save = priv.save_size > 0 && priv.cart_ram != NULL;
 		const bool can_load = can_save &&
 				      dc_save_file_exists(priv.save_path);
+		char state_path[256];
+		const bool can_save_state = dc_state_path(&priv, state_path,
+							 sizeof(state_path)) == 0;
+		const bool can_load_state = can_save_state &&
+					    dc_save_file_exists(state_path);
 
-		action = dc_pause_menu_run(rom_title, can_save, can_load, menu_mode);
+		action = dc_pause_menu_run(rom_title, can_save, can_load,
+					   can_save_state, can_load_state,
+					   menu_mode);
 
 		switch (action) {
 		case DC_PAUSE_MENU_RESUME:
@@ -564,6 +653,30 @@ static int dc_handle_pause_menu(struct gb_s *gb, bool menu_mode)
 			gb_reset(gb);
 			dc_menu_show_message("Erase Save", "Save data erased.", 1200);
 			break;
+		case DC_PAUSE_MENU_SAVE_STATE:
+			if (dc_write_state(gb, &priv))
+				dc_menu_show_message("Save State", "State saved.", 1200);
+			else
+				dc_menu_show_message("Save State",
+						     "Unable to write state file.",
+						     1500);
+			break;
+		case DC_PAUSE_MENU_LOAD_STATE: {
+			const int st = dc_load_state(gb, &priv);
+
+			if (st == GB_SERIALIZE_OK)
+				dc_menu_show_message("Load State",
+						     "State loaded.", 1200);
+			else if (st == GB_SERIALIZE_ERROR_ROM)
+				dc_menu_show_message("Load State",
+						     "State is for a different ROM.",
+						     1500);
+			else
+				dc_menu_show_message("Load State",
+						     "Unable to load state file.",
+						     1500);
+			break;
+		}
 		case DC_PAUSE_MENU_SETTINGS:
 			dc_settings_menu_run(&app_settings);
 			dc_apply_settings_to_game(gb, &priv);

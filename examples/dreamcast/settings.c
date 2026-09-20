@@ -52,6 +52,7 @@ void dc_settings_init_defaults(struct dc_settings *settings)
 	settings->autosave_interval_sec = DC_SETTINGS_AUTOSAVE_DEFAULT_SEC;
 	settings->volume = DC_SETTINGS_VOLUME_DEFAULT;
 	settings->muted = false;
+	settings->menu_music = true;
 	settings->audio_buffer = DC_AUDIO_BUFFER_NORMAL;
 	settings->browser_root_index = 0;
 	settings->browser_view = 0;
@@ -152,6 +153,11 @@ static void dc_settings_parse_line(struct dc_settings *settings, const char *lin
 
 	if (ini_kv_get_int(line, "muted", &value)) {
 		settings->muted = value != 0;
+		return;
+	}
+
+	if (ini_kv_get_int(line, "menu_music", &value)) {
+		settings->menu_music = value != 0;
 		return;
 	}
 
@@ -258,6 +264,7 @@ static int dc_settings_write_file(const char *path, const struct dc_settings *se
 			  settings->autosave_interval_sec);
 	ini_kv_fprint_int(f, "volume", settings->volume);
 	ini_kv_fprint_bool(f, "muted", settings->muted);
+	ini_kv_fprint_bool(f, "menu_music", settings->menu_music);
 	ini_kv_fprint_int(f, "audio_buffer", (int)settings->audio_buffer);
 	ini_kv_fprint_int(f, "browser_root_index", settings->browser_root_index);
 	ini_kv_fprint_int(f, "browser_view", settings->browser_view);

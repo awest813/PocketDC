@@ -14,7 +14,7 @@
 #include "display.h"
 #include "video.h"
 
-#define DC_SETTINGS_CONFIG_VERSION     3
+#define DC_SETTINGS_CONFIG_VERSION     4
 #define DC_SETTINGS_RECENT_MAX         5
 #define DC_SETTINGS_FAVORITE_MAX       16
 #define DC_SETTINGS_AUTOSAVE_MIN_SEC   10
@@ -23,7 +23,7 @@
 #define DC_SETTINGS_VOLUME_MIN         0
 #define DC_SETTINGS_VOLUME_MAX         100
 #define DC_SETTINGS_VOLUME_DEFAULT     100
-#define DC_SETTINGS_ROW_COUNT          9
+#define DC_SETTINGS_ROW_COUNT          10
 #define DC_SETTINGS_LAST_ROM_LEN       256
 
 enum dc_audio_buffer_mode
@@ -45,6 +45,7 @@ struct dc_settings
 	int autosave_interval_sec;
 	uint8_t volume;
 	bool muted;
+	bool menu_music;
 	enum dc_audio_buffer_mode audio_buffer;
 	int browser_root_index;
 	uint8_t browser_view;

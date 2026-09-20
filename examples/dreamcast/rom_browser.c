@@ -13,12 +13,14 @@
 #include <kos.h>
 #include <dc/maple/controller.h>
 
+#include "audio.h"
 #include "input.h"
 #include "rom_browser.h"
 #include "settings.h"
 #include "toast.h"
 #include "ui.h"
 #include "video.h"
+#include "../../extras/zip_rom/zip_rom.h"
 
 #define DC_BROWSER_LINE_HEIGHT 22
 #define DC_BROWSER_LIST_TOP    68
@@ -62,6 +64,8 @@ static int dc_has_rom_extension(const char *name)
 	if (len >= 3 && strcasecmp(name + len - 3, ".gb") == 0)
 		return 1;
 	if (len >= 4 && strcasecmp(name + len - 4, ".gbc") == 0)
+		return 1;
+	if (len >= 4 && strcasecmp(name + len - 4, ".zip") == 0)
 		return 1;
 
 	return 0;
@@ -434,6 +438,7 @@ static void dc_browser_add_rom(struct dc_browser *browser, const char *dir_path,
 
 	slot->cover_ready = false;
 	slot->cover_from_file = false;
+	slot->is_zip = zip_rom_path_is_zip(slot->path);
 	slot->cart_name[0] = '\0';
 	slot->rom_size[0] = '\0';
 
@@ -442,6 +447,8 @@ static void dc_browser_add_rom(struct dc_browser *browser, const char *dir_path,
 		dc_rom_format_cart_info(cart_type, rom_size_code, slot->cart_name,
 					sizeof(slot->cart_name), slot->rom_size,
 					sizeof(slot->rom_size));
+	} else if (slot->is_zip) {
+		return;
 	} else {
 		strncpy(slot->title, "Unknown", sizeof(slot->title) - 1);
 		slot->title[sizeof(slot->title) - 1] = '\0';
@@ -549,8 +556,10 @@ int dc_browser_scan(struct dc_browser *browser)
 	}
 
 	closedir(dir);
+	dc_audio_cdda_hold();
 	dc_browser_scan_directory(browser, browser->root_path, &count, &truncated,
 				  true);
+	dc_audio_cdda_release();
 	dc_browser_set_covers_path(browser);
 	browser->count = count;
 	qsort(browser->entries, (size_t)browser->count, sizeof(browser->entries[0]),
@@ -632,11 +641,12 @@ static void dc_browser_draw_preview_panel(struct dc_browser *browser,
 	dc_ui_draw_text_ellipsis(screen, DC_BROWSER_PREVIEW_X + 8, 272,
 				 DC_SCREEN_WIDTH - DC_BROWSER_PREVIEW_X - 16,
 				 entry->name, DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
-	snprintf(line, sizeof(line), "%s  %s  %s%s",
+	snprintf(line, sizeof(line), "%s  %s  %s%s%s",
 		 entry->is_cgb ? "GBC" : "DMG",
 		 entry->cart_name[0] ? entry->cart_name : "?",
 		 entry->rom_size[0] ? entry->rom_size : "?",
-		 entry->has_save ? "  [SAV]" : "");
+		 entry->has_save ? "  [SAV]" : "",
+		 entry->is_zip ? "  [ZIP]" : "");
 	dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 296, line,
 			DC_UI_COLOR_DIM, DC_UI_COLOR_PANEL);
 	dc_ui_draw_text(screen, DC_BROWSER_PREVIEW_X + 8, 316,
@@ -751,7 +761,7 @@ static void dc_browser_draw(const struct dc_browser *browser,
 		dc_ui_draw_text(screen, 96, 132, "No ROM files found.",
 				DC_UI_COLOR_TITLE, DC_UI_COLOR_PANEL);
 		dc_ui_draw_text(screen, 96, 160,
-				"Add .gb/.gbc files to this device path or a subfolder,",
+				"Add .gb/.gbc/.zip files to this device path or a subfolder,",
 				DC_UI_COLOR_FG, DC_UI_COLOR_PANEL);
 		dc_ui_draw_text(screen, 96, 184,
 				"then press Start to refresh the list.",
@@ -1272,6 +1282,27 @@ int dc_rom_load(struct dc_priv *priv, const char *rom_path)
 
 	if (!priv || !rom_path)
 		return -1;
+
+	if (zip_rom_path_is_zip(rom_path)) {
+		uint8_t *data = NULL;
+		size_t unzipped = 0;
+
+		if (zip_rom_extract(rom_path, &data, &unzipped) != 0 ||
+		    unzipped < DC_ROM_HEADER_SIZE || unzipped > ZIP_ROM_MAX_SIZE) {
+			free(data);
+			printf("pocketdc: unable to extract ROM from '%s'\n", rom_path);
+			return -1;
+		}
+
+		priv->rom = data;
+		priv->rom_size = unzipped;
+		strncpy(priv->rom_path, rom_path, sizeof(priv->rom_path) - 1);
+		priv->rom_path[sizeof(priv->rom_path) - 1] = '\0';
+		if (dc_save_path_from_rom(rom_path, priv->save_path,
+					  sizeof(priv->save_path)) != 0)
+			priv->save_path[0] = '\0';
+		return 0;
+	}
 
 	f = fopen(rom_path, "rb");
 	if (!f) {

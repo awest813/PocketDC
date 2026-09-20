@@ -2,7 +2,7 @@ Device Info : CD-ROM1/1
 Area Symbols : JUE
 Peripherals : E000F10
 Product No : T-41320
-Version : V1.031
+Version : V1.033
 Release Date : 20260609
 Boot Filename : 1ST_READ.BIN
 SW Maker Name : Mr. Paul

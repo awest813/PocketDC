@@ -10,6 +10,7 @@
 #include "cover.h"
 #include "font8x8.h"
 #include "ui.h"
+#include "../../extras/zip_rom/zip_rom.h"
 
 #define DC_COVER_MAGIC 0x35353557U /* "W555" little-endian */
 
@@ -75,16 +76,24 @@ bool dc_rom_read_header(const char *rom_path, char *title, size_t title_len,
 	if (!rom_path || !title || title_len == 0)
 		return false;
 
-	file = fopen(rom_path, "rb");
-	if (!file)
-		return false;
+	if (zip_rom_path_is_zip(rom_path)) {
+		size_t got = 0;
 
-	if (fread(header, 1, sizeof(header), file) != sizeof(header)) {
+		if (zip_rom_read(rom_path, header, sizeof(header), &got) != 0 ||
+		    got < sizeof(header))
+			return false;
+	} else {
+		file = fopen(rom_path, "rb");
+		if (!file)
+			return false;
+
+		if (fread(header, 1, sizeof(header), file) != sizeof(header)) {
+			fclose(file);
+			return false;
+		}
+
 		fclose(file);
-		return false;
 	}
-
-	fclose(file);
 
 	title[0] = '\0';
 	for (i = 0; i < 16 && title_len > i + 1; i++) {

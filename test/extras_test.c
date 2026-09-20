@@ -3,10 +3,13 @@
 #include "../extras/audio_processor/audio_processor.h"
 #include "../extras/audio_ring/audio_ring.h"
 #include "../extras/ini_kv/ini_kv.h"
+#include "../extras/zip_rom/zip_rom.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
 static void test_ini_kv_get_int(void)
 {
@@ -311,6 +314,162 @@ static void test_audio_ring_reset(void)
 	lequal((int)audio_ring_used(&ring), 2); /* re-primed to target cushion */
 }
 
+static void put_le16(uint8_t *p, uint16_t v)
+{
+	p[0] = (uint8_t)(v & 0xff);
+	p[1] = (uint8_t)((v >> 8) & 0xff);
+}
+
+static void put_le32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)(v & 0xff);
+	p[1] = (uint8_t)((v >> 8) & 0xff);
+	p[2] = (uint8_t)((v >> 16) & 0xff);
+	p[3] = (uint8_t)((v >> 24) & 0xff);
+}
+
+static void make_dummy_rom(uint8_t *rom, size_t len, const char *title)
+{
+	size_t i;
+
+	memset(rom, 0, len);
+	for (i = 0; title[i] != '\0' && i < 15; i++)
+		rom[0x134 + i] = (uint8_t)title[i];
+	rom[0x143] = 0x80;
+	rom[0x147] = 0x01;
+	rom[0x148] = 0x00;
+}
+
+static int deflate_raw(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_cap,
+		       size_t *out_len)
+{
+	z_stream stream;
+	int ret;
+
+	memset(&stream, 0, sizeof(stream));
+	if (deflateInit2(&stream, Z_BEST_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 8,
+			 Z_DEFAULT_STRATEGY) != Z_OK)
+		return -1;
+
+	stream.next_in = (Bytef *)in;
+	stream.avail_in = (uInt)in_len;
+	stream.next_out = out;
+	stream.avail_out = (uInt)out_cap;
+	ret = deflate(&stream, Z_FINISH);
+	*out_len = (size_t)stream.total_out;
+	deflateEnd(&stream);
+	return ret == Z_STREAM_END ? 0 : -1;
+}
+
+static int write_single_zip(const char *path, const char *name, const uint8_t *data,
+			    size_t size, int method)
+{
+	FILE *f;
+	uint8_t local[30];
+	uint8_t central[46];
+	uint8_t eocd[22];
+	uint8_t comp[1024];
+	const uint8_t *payload = data;
+	size_t payload_len = size;
+	uint32_t crc;
+	uint16_t name_len;
+	long cd_off;
+
+	if (method == 8) {
+		if (deflate_raw(data, size, comp, sizeof(comp), &payload_len) != 0)
+			return -1;
+		payload = comp;
+	}
+
+	crc = (uint32_t)crc32(0L, data, (uInt)size);
+	name_len = (uint16_t)strlen(name);
+
+	memset(local, 0, sizeof(local));
+	put_le32(local, 0x04034b50);
+	put_le16(local + 4, 20);
+	put_le16(local + 8, (uint16_t)method);
+	put_le32(local + 14, crc);
+	put_le32(local + 18, (uint32_t)payload_len);
+	put_le32(local + 22, (uint32_t)size);
+	put_le16(local + 26, name_len);
+
+	memset(central, 0, sizeof(central));
+	put_le32(central, 0x02014b50);
+	put_le16(central + 4, 20);
+	put_le16(central + 6, 20);
+	put_le16(central + 10, (uint16_t)method);
+	put_le32(central + 16, crc);
+	put_le32(central + 20, (uint32_t)payload_len);
+	put_le32(central + 24, (uint32_t)size);
+	put_le16(central + 28, name_len);
+
+	f = fopen(path, "wb");
+	if (!f)
+		return -1;
+	fwrite(local, 1, sizeof(local), f);
+	fwrite(name, 1, name_len, f);
+	fwrite(payload, 1, payload_len, f);
+	cd_off = ftell(f);
+	fwrite(central, 1, sizeof(central), f);
+	fwrite(name, 1, name_len, f);
+
+	memset(eocd, 0, sizeof(eocd));
+	put_le32(eocd, 0x06054b50);
+	put_le16(eocd + 8, 1);
+	put_le16(eocd + 10, 1);
+	put_le32(eocd + 12, (uint32_t)(46 + name_len));
+	put_le32(eocd + 16, (uint32_t)cd_off);
+	fwrite(eocd, 1, sizeof(eocd), f);
+	fclose(f);
+	return 0;
+}
+
+static void test_zip_rom_names(void)
+{
+	lok(zip_rom_path_is_zip("/sd/roms/game.zip"));
+	lok(zip_rom_path_is_zip("GAME.ZIP"));
+	lok(!zip_rom_path_is_zip("/sd/roms/game.gbc"));
+	lok(zip_rom_name_is_gb("folder/Tetris.gb"));
+	lok(zip_rom_name_is_gb("POCKET.GBC"));
+	lok(!zip_rom_name_is_gb("readme.txt"));
+	lok(!zip_rom_name_is_gb("folder/"));
+}
+
+static void test_zip_rom_stored_and_deflate(void)
+{
+	uint8_t rom[0x150];
+	uint8_t header[0x150];
+	uint8_t *extracted = NULL;
+	size_t extracted_size = 0;
+	size_t got = 0;
+	char stored_path[] = "/tmp/pocketdc_stored.zip";
+	char deflate_path[] = "/tmp/pocketdc_deflate.zip";
+	char empty_path[] = "/tmp/pocketdc_empty.zip";
+
+	make_dummy_rom(rom, sizeof(rom), "POCKETDC");
+	lok(write_single_zip(stored_path, "pocket.gbc", rom, sizeof(rom), 0) == 0);
+	lok(write_single_zip(deflate_path, "games/pocket.gb", rom, sizeof(rom), 8) == 0);
+	lok(write_single_zip(empty_path, "notes.txt", rom, sizeof(rom), 0) == 0);
+
+	lequal(zip_rom_read(stored_path, header, sizeof(header), &got), 0);
+	lequal((int)got, (int)sizeof(header));
+	lok(memcmp(header + 0x134, "POCKETDC", 8) == 0);
+	lequal(header[0x143], 0x80);
+
+	extracted = NULL;
+	lequal(zip_rom_extract(deflate_path, &extracted, &extracted_size), 0);
+	lequal((int)extracted_size, (int)sizeof(rom));
+	lok(extracted != NULL);
+	lok(memcmp(extracted, rom, sizeof(rom)) == 0);
+	free(extracted);
+
+	lequal(zip_rom_extract(empty_path, &extracted, &extracted_size), -1);
+
+	remove(stored_path);
+	remove(deflate_path);
+	remove(empty_path);
+}
+
 int main(void)
 {
 	lrun("ini_kv_get_int", test_ini_kv_get_int);
@@ -327,6 +486,8 @@ int main(void)
 	lrun("audio_ring_oversized_block", test_audio_ring_oversized_block);
 	lrun("audio_ring_wraparound", test_audio_ring_wraparound);
 	lrun("audio_ring_reset", test_audio_ring_reset);
+	lrun("zip_rom_names", test_zip_rom_names);
+	lrun("zip_rom_stored_and_deflate", test_zip_rom_stored_and_deflate);
 	lresults();
 	return lfails != 0;
 }

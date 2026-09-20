@@ -44,6 +44,7 @@ struct dc_browser_entry
 	char rom_size[8];
 	bool is_cgb;
 	bool has_save;
+	bool is_zip;
 	bool cover_ready;
 	bool cover_from_file;
 	uint16_t cover[DC_COVER_HEIGHT][DC_COVER_WIDTH];

@@ -60,6 +60,7 @@ static void dc_apply_av_settings(void)
 #if ENABLE_SOUND
 	dc_audio_configure(app_settings.volume, app_settings.muted,
 			   app_settings.audio_buffer);
+	dc_audio_set_menu_music(app_settings.menu_music);
 #endif
 }
 
@@ -434,10 +435,17 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 	char rom_title[17];
 
 	memset(&priv, 0, sizeof(priv));
+#if ENABLE_SOUND
+	dc_audio_enter_game();
+#endif
 	if (dc_rom_load(&priv, rom_path) != 0) {
 		dc_menu_show_message("Load Failed",
 				     "Unable to open or validate ROM file.",
 				     1500);
+#if ENABLE_SOUND
+		if (menu_mode)
+			dc_audio_enter_menu();
+#endif
 		return menu_mode;
 	}
 
@@ -461,6 +469,10 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 
 			dc_menu_show_message("Load Failed", message, 1500);
 			dc_rom_unload(&priv);
+#if ENABLE_SOUND
+			if (menu_mode)
+				dc_audio_enter_menu();
+#endif
 			return menu_mode;
 		}
 	}
@@ -586,6 +598,10 @@ static bool dc_run_game(const char *rom_path, const char *save_path, bool menu_m
 
 	dc_write_save(&priv);
 	dc_rom_unload(&priv);
+#if ENABLE_SOUND
+	if (menu_mode)
+		dc_audio_enter_menu();
+#endif
 
 	if (exit_app)
 		return false;
@@ -643,6 +659,9 @@ int main(int argc, char **argv)
 		if (!dc_run_game(argv[1], save_path, false))
 			goto shutdown;
 	} else {
+#if ENABLE_SOUND
+		dc_audio_enter_menu();
+#endif
 		while (1) {
 			enum dc_main_menu_action action;
 

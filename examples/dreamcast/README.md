@@ -4,7 +4,7 @@ KallistiOS frontend for running PocketDC on the Sega Dreamcast.
 
 ## Prerequisites
 
-1. Build the [KallistiOS](https://github.com/KallistiOS/KallistiOS) toolchain and SDK.
+1. Build the [KallistiOS](https://github.com/KallistiOS/KallistiOS) toolchain and SDK (include **zlib** from kos-ports; the ELF links `-lz` for ZIP ROMs).
 2. Source the KOS environment:
 
 ```bash
@@ -34,7 +34,7 @@ Shows a start screen, then the main menu with **Continue** (when the last played
 
 ### ROM library
 
-From the main menu, choose **ROM Library**. Scans these paths and **one level of subfolders** (press **B** to cycle devices). `covers`, `boxart`, and `saves` directories are skipped:
+From the main menu, choose **ROM Library**. Scans these paths and **one level of subfolders** (press **B** to cycle devices). `covers`, `boxart`, and `saves` directories are skipped. `.gb`, `.gbc`, and `.zip` files are listed (the first `.gb`/`.gbc` member in a ZIP is used; store or deflate):
 
 | Path | Typical source |
 |------|----------------|
@@ -62,7 +62,8 @@ The header shows a friendly device name (for example **GD-ROM** or **SD Card**) 
 
 - **List view** — ROM titles from the cartridge header, with a large cover preview on the right
 - **Grid view** — 5×3 cover grid (procedural placeholders or your own art)
-- **[SAV]** when a matching `.sav` exists
+- **[SAV]** when a matching `.sav` exists (same basename as the `.gb`/`.gbc`/`.zip`)
+- **[ZIP]** in the preview when the library entry is a compressed ROM
 - **Box art** from [xero/boxart](https://github.com/xero/boxart) (CC0) for matching NoIntro ROM names — see [covers/README.md](covers/README.md)
 - Optional overrides: `covers/ROMNAME.w555`
 
@@ -116,6 +117,7 @@ Accessible from the main menu or pause menu. Video and audio changes apply immed
 | Autosave | Periodic battery-RAM save during play |
 | Autosave interval | Seconds between autosaves (10–300) |
 | Volume | Master audio level (0–100%); press A on this row to mute |
+| Menu music | Play disc CDDA tracks in menus (needs audio tracks on the disc) |
 | Audio buffer | Low latency, normal, or stable buffering |
 
 ## Boot Disc (CDI/GDI)
@@ -127,11 +129,12 @@ Accessible from the main menu or pause menu. Video and audio changes apply immed
 ./scripts/build-disc.sh
 ```
 
-3. Copy homebrew `.gb` / `.gbc` ROMs into `disc-build/roms/` before burning.
+3. Copy homebrew `.gb` / `.gbc` / `.zip` ROMs into `disc-build/roms/` before burning.
 4. Box art is bundled automatically from `covers/boxart/` when you run `build-disc.sh`.
 5. Refresh art from upstream: `./scripts/import-boxart.sh` or `make -f Makefile.covers fetch-covers`
 6. Fetch covers only for ROMs on the disc: `make -f Makefile.covers fetch-roms ROMS_DIR=disc-build/roms`
-7. Burn `disc-build/walnut-dc.iso` or `disc-build/walnut-dc.cdi`.
+7. Optional **menu CDDA**: 44.1 kHz stereo WAV files in `meta/cdda/` plus `mkdcdisc` on `PATH` (see [meta/cdda/README.md](meta/cdda/README.md)).
+8. Burn `disc-build/walnut-dc.iso` or `disc-build/walnut-dc.cdi`.
 
 Disc metadata is defined in `meta/ip.txt` (processed by KOS `makeip`).
 
@@ -156,12 +159,13 @@ Phase 3 (ROM browser + disc packaging) is implemented. Phase 4 hardware validati
 - **Status bar** HUD during gameplay
 - **Audio controls** for volume, mute, and buffer size
 - **VGA mode** with auto cable detection (VGA box vs TV)
-- **Cover-art ROM picker** with list/grid views, ROM counts, mapper/size info, recents, favorites, letter jump, and bundled [xero/boxart](https://github.com/xero/boxart) GB/GBC art
+- **Cover-art ROM picker** with list/grid views, ROM counts, mapper/size info, recents, favorites, letter jump, ZIP ROMs, and bundled [xero/boxart](https://github.com/xero/boxart) GB/GBC art
+- **CDDA menu music** when the disc has audio tracks (Settings: Menu music)
 - **About** credits screen and Dreamcast A+B+X+Y+Start quit combo
 - **Live settings** for video output, scale, and audio while browsing options
 
 ## Licensing
 
-PocketDC is MIT licensed. Shared MIT modules live in `extras/audio_processor/` (volume/mute/DC block), `extras/audio_ring/` (audio buffering), and `extras/ini_kv/` (config I/O). MiniGB APU has its own license in `examples/sdl2/minigb_apu/LICENSE`. KOS requires attribution in distributed binaries.
+PocketDC is MIT licensed. Shared MIT modules live in `extras/audio_processor/` (volume/mute/DC block), `extras/audio_ring/` (audio buffering), `extras/ini_kv/` (config I/O), and `extras/zip_rom/` (ZIP Game Boy ROMs). MiniGB APU has its own license in `examples/sdl2/minigb_apu/LICENSE`. KOS requires attribution in distributed binaries. ZIP inflate uses zlib.
 
 Do not ship copyrighted ROMs with homebrew releases.

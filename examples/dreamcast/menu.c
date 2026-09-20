@@ -537,6 +537,7 @@ void dc_controls_menu_run(void)
 		"",
 		"Settings (main or pause menu)",
 		"Video output, scale, status bar, audio",
+		"Menu music = CDDA tracks on the disc",
 		"Autosave on/off and interval",
 		"Changes apply immediately",
 		"",
@@ -544,7 +545,8 @@ void dc_controls_menu_run(void)
 		"A = Load  B = Next device  Y = Grid/List",
 		"Start+Y = Pin/unpin favorite  L/R = Jump letter",
 		"Left/Right = Page  L+R = Filter  Start = Scan  X = Back",
-		"* = Recent  + / yellow mark = Favorite"
+		"* = Recent  + / yellow mark = Favorite",
+		".zip ROMs (first .gb/.gbc inside) are listed"
 	};
 	const unsigned int line_count = sizeof(lines) / sizeof(lines[0]);
 	const int visible_lines =
@@ -610,12 +612,13 @@ void dc_about_menu_run(void)
 		"",
 		"Frontend",
 		"KallistiOS  PVR  AICA  Maple",
-		"audio_processor  audio_ring  ini_kv",
+		"audio_processor  audio_ring  ini_kv  zip_rom",
 		"",
 		"Conventions",
 		"A+B+X+Y+Start = quit to loader",
 		"B in menus = back",
 		"Start+Y in library = favorite",
+		"Disc CDDA plays in menus when present",
 		"",
 		"MIT License. Do not distribute ROMs."
 	};
@@ -724,6 +727,7 @@ static void dc_settings_format_row(const struct dc_settings *settings, int row,
 		"Autosave",
 		"Autosave interval",
 		"Volume",
+		"Menu music",
 		"Audio buffer"
 	};
 	const char marker = selected ? '>' : ' ';
@@ -765,6 +769,10 @@ static void dc_settings_format_row(const struct dc_settings *settings, int row,
 		snprintf(line, line_len, "%c %s: %s%u%%", marker, labels[row],
 			 settings->muted ? "Mute " : "",
 			 settings->muted ? 0U : settings->volume);
+		break;
+	case 8:
+		snprintf(line, line_len, "%c %s: %s", marker, labels[row],
+			 settings->menu_music ? "On" : "Off");
 		break;
 	default:
 		snprintf(line, line_len, "%c %s: %s", marker, labels[row],
@@ -813,7 +821,7 @@ static void dc_settings_draw_value_screen(const struct dc_settings *settings,
 
 static bool dc_settings_row_is_toggle(int row)
 {
-	return row == 3 || row == 4 || row == 5;
+	return row == 3 || row == 4 || row == 5 || row == 8;
 }
 
 static void dc_settings_nudge_row(struct dc_settings *settings, int *selected_row,
@@ -890,6 +898,12 @@ static void dc_settings_nudge_row(struct dc_settings *settings, int *selected_ro
 		snprintf(toast_line, sizeof(toast_line), "Volume: %u%%",
 			 settings->volume);
 		dc_toast_show(toast_line, 1000);
+		break;
+	case 8:
+		settings->menu_music = !settings->menu_music;
+		dc_toast_show(settings->menu_music ? "Menu music on" :
+						     "Menu music off",
+			      1000);
 		break;
 	default:
 		settings->audio_buffer =
